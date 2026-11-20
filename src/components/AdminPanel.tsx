@@ -55,12 +55,14 @@ export function AdminPanel() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
-  // Focused 3-field Admin Upload Form (Classe + Disciplina + PDF)
+  // Focused Admin Upload Form (Classe + Disciplina + PDF + auto-OCR range when scanned)
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [gradeNumber, setGradeNumber] = useState<number>(10);
   const [subject, setSubject] = useState<string>('Biologia');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [pdfInspect, setPdfInspect] = useState<AdminPdfInspect | null>(null);
+  const [startPage, setStartPage] = useState<number>(1);
+  const [endPage, setEndPage] = useState<number>(1);
   const [inspectingPdf, setInspectingPdf] = useState(false);
   const [publishing, setPublishing] = useState(false);
   const [progress, setProgress] = useState<DissectionProgress | null>(null);
@@ -141,6 +143,8 @@ export function AdminPanel() {
       setPdfInspect(info);
       setGradeNumber(info.suggestedGradeNumber);
       setSubject(info.suggestedSubject);
+      setStartPage(1);
+      setEndPage(info.totalPages);
     } catch {
       setUploadError('Não foi possível abrir o PDF selecionado.');
       setSelectedFile(null);
@@ -159,14 +163,21 @@ export function AdminPanel() {
     setPublishNotice(null);
 
     try {
-      const extracted = await dissectPdfForAdmin(selectedFile, subject, (p) => {
-        setProgress({ ...p, percent: Math.min(72, p.percent) });
+      const extracted = await dissectPdfForAdmin(selectedFile, {
+        subject,
+        startPage,
+        endPage,
+        enableOcr: true,
+        stripBottomWatermark: Boolean(pdfInspect?.detectedWatermark),
+        onProgress: (p) => {
+          setProgress({ ...p, percent: Math.min(78, p.percent) });
+        },
       });
 
       setProgress({
         stage: 'ai_enriching',
-        percent: 82,
-        detail: `A gerar resumos de ½ parágrafo via Groq e a indexar ${extracted.topics.length} temas no CockroachDB…`,
+        percent: 84,
+        detail: `A corrigir texto e gerar resumos de ½ parágrafo via Groq (${extracted.topics.length} temas)…`,
       });
 
       const res = await publishAdminCurriculum({
@@ -182,8 +193,11 @@ export function AdminPanel() {
         detail: 'Matéria curricular publicada com sucesso!',
       });
 
+      const ocrNote =
+        extracted.stats.ocrPages > 0 ? ` · ${extracted.stats.ocrPages} págs. lidas via OCR` : '';
+
       setPublishNotice(
-        `${res.subject} (${res.grade}) publicada com ${res.topicsCount} temas indexados (${res.groqEnrichedCount} resumidos pela Groq${res.groqModel ? ` · ${res.groqModel}` : ''}).`
+        `${res.subject} (${res.grade}) publicada com ${res.topicsCount} temas indexados${ocrNote} (${res.groqEnrichedCount} resumidos pela Groq).`
       );
       setSelectedFile(null);
       setPdfInspect(null);
@@ -585,11 +599,89 @@ export function AdminPanel() {
               </div>
             </div>
 
+            {/* Scanned / CamScanner PDF Detection Banner + Page Range Control */}
+            {pdfInspect && (
+              <div
+                className={`rounded-2xl border p-4 space-y-3 ${
+                  pdfInspect.isScannedPdf
+                    ? 'bg-amber-soft/55 border-amber/50'
+                    : 'bg-parchment/60 border-sand'
+                }`}
+              >
+                {pdfInspect.isScannedPdf ? (
+                  <div className="text-[13px] text-ink leading-relaxed">
+                    <p className="font-extrabold text-forest flex items-center gap-1.5">
+                      <Sparkles className="w-4 h-4 text-amber shrink-0" aria-hidden="true" />
+                      <span>
+                        PDF digitalizado por imagem detetado
+                        {pdfInspect.detectedWatermark ? ` (${pdfInspect.detectedWatermark})` : ''} —
+                        OCR em Português ativado
+                      </span>
+                    </p>
+                    <p className="mt-1 text-[12.5px] text-ink-soft">
+                      As marcas d&apos;água do scanner serão ignoradas e o motor OCR lerá o texto
+                      real de cada página fotografada (~1,5 s por página), seguido de limpeza e
+                      resumos de ½ parágrafo via Groq.
+                    </p>
+                  </div>
+                ) : (
+                  <p className="text-[12.5px] font-semibold text-forest">
+                    PDF com texto digital detetado ({pdfInspect.totalPages} páginas). Extração
+                    instantânea pronta.
+                  </p>
+                )}
+
+                {pdfInspect.totalPages > 1 && (
+                  <div className="flex flex-wrap items-center gap-3 pt-1">
+                    <span className="text-[11.5px] font-bold uppercase tracking-[0.08em] text-ink-muted">
+                      Intervalo de páginas:
+                    </span>
+                    <div className="inline-flex items-center gap-2">
+                      <input
+                        type="number"
+                        min={1}
+                        max={pdfInspect.totalPages}
+                        value={startPage}
+                        disabled={publishing}
+                        aria-label="Página inicial"
+                        onChange={(e) => {
+                          const v = Math.max(1, Math.min(pdfInspect.totalPages, Number(e.target.value) || 1));
+                          setStartPage(v);
+                          if (v > endPage) setEndPage(v);
+                        }}
+                        className="w-20 min-h-[38px] px-2.5 rounded-xl bg-ivory border border-sand-strong text-[13.5px] font-bold text-ink tabular-nums text-center"
+                      />
+                      <span className="text-[12px] text-ink-muted">até</span>
+                      <input
+                        type="number"
+                        min={startPage}
+                        max={pdfInspect.totalPages}
+                        value={endPage}
+                        disabled={publishing}
+                        aria-label="Página final"
+                        onChange={(e) => {
+                          const v = Math.max(
+                            startPage,
+                            Math.min(pdfInspect.totalPages, Number(e.target.value) || pdfInspect.totalPages)
+                          );
+                          setEndPage(v);
+                        }}
+                        className="w-20 min-h-[38px] px-2.5 rounded-xl bg-ivory border border-sand-strong text-[13.5px] font-bold text-ink tabular-nums text-center"
+                      />
+                      <span className="text-[12px] text-ink-muted tabular-nums">
+                        de {pdfInspect.totalPages} págs.
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
             {publishing && progress && (
               <div className="rounded-xl bg-parchment border border-sand p-4 space-y-2">
-                <div className="flex items-center justify-between text-[13px] font-bold text-ink">
+                <div className="flex items-center justify-between gap-2 text-[13px] font-bold text-ink">
                   <span>{progress.detail}</span>
-                  <span className="tabular-nums text-forest">{progress.percent}%</span>
+                  <span className="tabular-nums text-forest shrink-0">{progress.percent}%</span>
                 </div>
                 <div className="h-2 rounded-full bg-sand overflow-hidden">
                   <div
@@ -597,6 +689,11 @@ export function AdminPanel() {
                     style={{ width: `${progress.percent}%` }}
                   />
                 </div>
+                {progress.ocrSnippet && (
+                  <p className="pt-1 font-editorial italic text-[12px] text-ink-soft truncate">
+                    Texto lido: “{progress.ocrSnippet}”
+                  </p>
+                )}
               </div>
             )}
 

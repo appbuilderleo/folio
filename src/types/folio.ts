@@ -123,11 +123,12 @@ export interface BookmarkEntry {
 }
 
 export interface DissectionProgress {
-  stage: 'reading' | 'cleaning' | 'structuring' | 'summarizing' | 'ai_enriching' | 'saving' | 'done';
+  stage: 'reading' | 'ocr' | 'cleaning' | 'structuring' | 'summarizing' | 'ai_enriching' | 'saving' | 'done';
   percent: number;
   currentPage?: number;
   totalPages?: number;
   detail: string;
+  ocrSnippet?: string;
 }
 
 /**
@@ -145,6 +146,7 @@ export interface AdminTopicDraft {
   paragraphs: string[];
   pages?: TopicPage[];
   readingMinutes: number;
+  sourceWasOcr?: boolean;
 }
 
 export interface AdminCurriculumOverview {

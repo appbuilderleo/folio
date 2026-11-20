@@ -859,6 +859,19 @@ apiRouter.post('/admin/curricula', requireAdmin, async (req, res) => {
     return res.status(400).json({ error: 'Seleciona Classe (1–12), Disciplina e anexa um PDF com texto.' });
   }
 
+  // Reject watermark-only garbage (e.g. CamScanner without OCR) so corrupted topics never enter the catalog
+  const meaningfulChars = rawTopics
+    .map((t) => (t.paragraphs || []).join(' '))
+    .join(' ')
+    .replace(/\b(scanned\s+(by|with)\s+\w+|camscanner|digitalizado\s+com\s+\w+)\b/gi, '')
+    .trim().length;
+
+  if (meaningfulChars < 40) {
+    return res.status(400).json({
+      error: 'O PDF não contém texto didático válido (apenas marcas de scanner). Ativa o OCR automático antes de publicar.',
+    });
+  }
+
   const grade = gradeNumberToLabel(gradeNumber);
   const cycle = gradeNumberToCycle(gradeNumber);
 

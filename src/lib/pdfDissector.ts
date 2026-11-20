@@ -9,6 +9,8 @@ interface RawTextLine {
   y: number;
   fontSize: number;
   pageNumber: number;
+  fromOcr?: boolean;
+  gapBelow?: number;
 }
 
 interface ExtractedPage {
@@ -17,6 +19,7 @@ interface ExtractedPage {
   paragraphs: string[];
   headings: string[];
   rawText: string;
+  usedOcr: boolean;
 }
 
 export interface AdminPdfInspect {
@@ -25,14 +28,27 @@ export interface AdminPdfInspect {
   totalPages: number;
   fileName: string;
   fileSizeBytes: number;
+  isScannedPdf: boolean;
+  detectedWatermark: string | null;
+}
+
+export interface AdminDissectOptions {
+  subject: string;
+  startPage?: number;
+  endPage?: number;
+  enableOcr?: boolean;
+  stripBottomWatermark?: boolean;
+  onProgress?: (progress: DissectionProgress) => void;
 }
 
 export interface AdminDissectResult {
   topics: AdminTopicDraft[];
   stats: {
     totalPages: number;
+    processedPages: number;
     textPages: number;
-    scannedPages: number;
+    ocrPages: number;
+    emptyPages: number;
     topicsCount: number;
     totalWords: number;
   };
@@ -54,6 +70,9 @@ export const AVAILABLE_SUBJECTS = [
   'TICs',
 ];
 
+const SCANNER_WATERMARK_REGEX =
+  /\b(scanned\s+(by|with)\s+\w+|camscanner|cam\s*scanner|digitalizado\s+(com|por)\s+\w+|adobe\s*scan|tapscanner|microsoft\s*lens|fast\s*scanner|tiny\s*scanner|clear\s*scanner|genius\s*scan|notebloc|vflat|turbo\s*scan|pdf\s*element|wps\s*office)\b/i;
+
 const PT_STOPWORDS = new Set([
   'a', 'o', 'os', 'as', 'um', 'uma', 'uns', 'umas', 'de', 'do', 'da', 'dos', 'das',
   'em', 'no', 'na', 'nos', 'nas', 'por', 'pelo', 'pela', 'pelos', 'pelas', 'para',
@@ -70,6 +89,7 @@ const PT_STOPWORDS = new Set([
   'apenas', 'bem', 'cada', 'assim', 'entao', 'então', 'logo', 'aqui', 'num', 'numa',
   'ao', 'aos', 'à', 'às', 'página', 'pagina', 'capitulo', 'capítulo', 'unidade', 'classe',
   'texto', 'figura', 'tabela', 'exemplo', 'exercicio', 'exercício', 'atividades', 'actividades',
+  'tema', 'inicial', 'scanned', 'camscanner',
 ]);
 
 const SUBJECT_PATTERNS: Array<{ subject: string; nameRegex: RegExp; regex: RegExp }> = [
@@ -86,7 +106,7 @@ const SUBJECT_PATTERNS: Array<{ subject: string; nameRegex: RegExp; regex: RegEx
   {
     subject: 'Física',
     nameRegex: /\bf[ií]sica\b/i,
-    regex: /\b(física|fisica|cinemática|cinematica|dinâmica|dinamica|velocidade|aceleração|aceleracao|newton|eletricidade|electricidade|óptica|optica|mecânica|mecanica)\b/gi,
+    regex: /\b(física|fisica|cinemática|cinematica|dinâmica|dinamica|velocidade|aceleração|aceleracao|newton|eletricidade|electricidade|óptica|optica|mecânica|mecanica|grandezas|medição|medicao)\b/gi,
   },
   {
     subject: 'Química',
@@ -130,15 +150,23 @@ export function formatGrade(gradeNumber: number): string {
   return `${clamped}.ª Classe`;
 }
 
+export function isScannerWatermark(text: string): boolean {
+  const trimmed = text.trim();
+  if (!trimmed) return true;
+  return SCANNER_WATERMARK_REGEX.test(trimmed);
+}
+
 function normalizeForMatch(text: string): string {
   return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
 function detectGrade(text: string): number {
-  const match = text.match(/\b(1[0-2]|[1-9])\s*(?:ª|a|\.ª|\.a)?\s*classe\b/i);
+  const match = text.match(/\b(1[0-2]|[1-9])\s*(?:ª|a|\.ª|\.a|º)?\s*(?:classe|cl\.?)\b/i);
   if (match) return parseInt(match[1], 10);
   const alt = text.match(/\bclasse\s*(1[0-2]|[1-9])\b/i);
   if (alt) return parseInt(alt[1], 10);
+  const compact = text.match(/\b(1[0-2]|[1-9])(?:a|ª)\b/i);
+  if (compact) return parseInt(compact[1], 10);
   return 10;
 }
 
@@ -158,10 +186,10 @@ function detectSubject(fileName: string, bodySample: string): string {
   return bestSubject;
 }
 
-async function extractPageLines(
+async function extractNativePageLines(
   pdfDoc: pdfjsLib.PDFDocumentProxy,
   pageNumber: number
-): Promise<RawTextLine[]> {
+): Promise<{ cleanLines: RawTextLine[]; detectedWatermark: string | null }> {
   const page = await pdfDoc.getPage(pageNumber);
   const textContent = await page.getTextContent();
   const fragments: Array<{ str: string; x: number; y: number; fontSize: number }> = [];
@@ -178,14 +206,15 @@ async function extractPageLines(
     fragments.push({ str: rawItem.str, x, y, fontSize });
   }
 
-  if (fragments.length === 0) return [];
+  if (fragments.length === 0) return { cleanLines: [], detectedWatermark: null };
+
   fragments.sort((a, b) => {
     const dy = b.y - a.y;
     if (Math.abs(dy) > 3.2) return dy;
     return a.x - b.x;
   });
 
-  const lines: RawTextLine[] = [];
+  const allLines: RawTextLine[] = [];
   let group = [fragments[0]];
   let currentY = fragments[0].y;
 
@@ -219,27 +248,220 @@ async function extractPageLines(
     if (Math.abs(f.y - currentY) <= tol) {
       group.push(f);
     } else {
-      lines.push(mergeGroup(group));
+      allLines.push(mergeGroup(group));
       group = [f];
       currentY = f.y;
     }
   }
-  lines.push(mergeGroup(group));
-  return lines.filter((l) => l.text.length > 0);
+  allLines.push(mergeGroup(group));
+
+  let detectedWatermark: string | null = null;
+  const cleanLines: RawTextLine[] = [];
+
+  for (const line of allLines) {
+    if (!line.text) continue;
+    if (isScannerWatermark(line.text)) {
+      if (!detectedWatermark) detectedWatermark = line.text;
+      continue;
+    }
+    cleanLines.push(line);
+  }
+
+  return { cleanLines, detectedWatermark };
 }
 
+/**
+ * Renders a scanned PDF page to a preprocessed high-contrast Canvas (cropping off
+ * CamScanner bottom watermarks if detected) for maximum Portuguese OCR accuracy.
+ */
+async function renderPageCanvasForOcr(
+  pdfDoc: pdfjsLib.PDFDocumentProxy,
+  pageNumber: number,
+  cropBottomWatermark: boolean
+): Promise<HTMLCanvasElement> {
+  const page = await pdfDoc.getPage(pageNumber);
+  const baseViewport = page.getViewport({ scale: 1 });
+  // Aim for ~1650px width for crisp Portuguese diacritics (á, ã, ç, ê, ó) without excess memory
+  const scale = Math.min(2.3, Math.max(1.5, 1650 / Math.max(baseViewport.width, 400)));
+  const viewport = page.getViewport({ scale });
+
+  const fullCanvas = document.createElement('canvas');
+  fullCanvas.width = Math.round(viewport.width);
+  fullCanvas.height = Math.round(viewport.height);
+
+  const ctx = fullCanvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) throw new Error('Canvas 2D indisponível para OCR');
+
+  // White paper background before rendering PDF page
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, fullCanvas.width, fullCanvas.height);
+
+  await page.render({
+    canvas: fullCanvas,
+    canvasContext: ctx,
+    viewport,
+  }).promise;
+
+  // Crop off bottom 5.8% strip when CamScanner / scanner footer watermark is present
+  const finalHeight = cropBottomWatermark
+    ? Math.round(fullCanvas.height * 0.942)
+    : fullCanvas.height;
+
+  const targetCanvas = document.createElement('canvas');
+  targetCanvas.width = fullCanvas.width;
+  targetCanvas.height = finalHeight;
+  const tCtx = targetCanvas.getContext('2d', { willReadFrequently: true })!;
+  tCtx.drawImage(fullCanvas, 0, 0, fullCanvas.width, finalHeight, 0, 0, fullCanvas.width, finalHeight);
+
+  // High-contrast grayscale stretch: clears gray CamScanner paper shadows while keeping ink razor-sharp
+  const imgData = tCtx.getImageData(0, 0, targetCanvas.width, targetCanvas.height);
+  const d = imgData.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+    // Contrast curve: push light paper grays (>188) to pure white, darken ink (<125)
+    let boosted = (gray - 128) * 1.48 + 136;
+    if (boosted > 235) boosted = 255;
+    if (boosted < 22) boosted = 0;
+    const v = Math.max(0, Math.min(255, boosted));
+    d[i] = v;
+    d[i + 1] = v;
+    d[i + 2] = v;
+  }
+  tCtx.putImageData(imgData, 0, 0);
+
+  // Release temporary full canvas
+  fullCanvas.width = 0;
+  fullCanvas.height = 0;
+
+  return targetCanvas;
+}
+
+/**
+ * Parses Tesseract v7 block/line/word output, filtering out low-confidence photo speckles
+ * and scanner watermarks while preserving vertical layout & heading heights.
+ */
+function parseTesseractBlocksToLines(
+  blocks: Array<{
+    paragraphs?: Array<{
+      lines?: Array<{
+        text: string;
+        confidence: number;
+        bbox: { x0: number; y0: number; x1: number; y1: number };
+        words?: Array<{ text: string; confidence: number }>;
+      }>;
+    }>;
+  }> | null,
+  fallbackText: string,
+  pageNumber: number
+): RawTextLine[] {
+  const raw: Array<{ text: string; y0: number; y1: number; h: number }> = [];
+
+  if (blocks && blocks.length > 0) {
+    for (const b of blocks) {
+      for (const p of b.paragraphs || []) {
+        for (const l of p.lines || []) {
+          if (l.confidence < 38) continue;
+
+          // Keep only reliable words to eliminate stray speckles from embedded photos/illustrations
+          let lineText = '';
+          if (Array.isArray(l.words) && l.words.length > 0) {
+            const cleanWords = l.words
+              .filter((w) => {
+                const wt = w.text.trim();
+                if (!wt) return false;
+                if (w.confidence >= 48) return true;
+                // Keep short Portuguese prepositions/punctuation if confidence is moderate
+                if (w.confidence >= 35 && /^[a-záàâãéêíóôõúç0-9.,;:!?()\-–]+$/i.test(wt)) {
+                  return true;
+                }
+                return false;
+              })
+              .map((w) => w.text.trim());
+            lineText = cleanWords.join(' ');
+          } else {
+            lineText = l.text.trim();
+          }
+
+          lineText = lineText
+            .replace(/\s+/g, ' ')
+            .replace(/^[^\wÁÀÂÃÉÊÍÓÔÕÚÇáàâãéêíóôõúç(]+(?=\s)/, '')
+            .trim();
+
+          // Filter out meaningless symbol-only photo noise
+          const alphaCount = (lineText.match(/[A-Za-zÁÀÂÃÉÊÍÓÔÕÚÇáàâãéêíóôõúç]/g) || []).length;
+          if (alphaCount < 3) continue;
+          if (isScannerWatermark(lineText)) continue;
+
+          const h = Math.max(10, l.bbox.y1 - l.bbox.y0);
+          raw.push({ text: lineText, y0: l.bbox.y0, y1: l.bbox.y1, h });
+        }
+      }
+    }
+  }
+
+  // Fallback to plain text if blocks were empty
+  if (raw.length === 0 && fallbackText.trim()) {
+    const plainLines = fallbackText
+      .split(/\r?\n/)
+      .map((s) => s.trim())
+      .filter((s) => {
+        if (isScannerWatermark(s)) return false;
+        const alpha = (s.match(/[A-Za-zÁÀÂÃÉÊÍÓÔÕÚÇáàâãéêíóôõúç]/g) || []).length;
+        return alpha >= 3;
+      });
+    return plainLines.map((text, idx) => ({
+      text,
+      y: 10000 - idx * 28,
+      fontSize: 16,
+      pageNumber,
+      fromOcr: true,
+    }));
+  }
+
+  raw.sort((a, b) => a.y0 - b.y0);
+
+  // Convert top-down pixel y0 into same descending coordinate convention + record gapBelow
+  const maxY = raw.reduce((m, r) => Math.max(m, r.y1), 2000) + 50;
+  return raw.map((item, idx) => {
+    const next = raw[idx + 1];
+    const gapBelow = next ? Math.max(0, next.y0 - item.y1) : 0;
+    return {
+      text: item.text,
+      y: maxY - item.y0,
+      fontSize: item.h,
+      pageNumber,
+      fromOcr: true,
+      gapBelow,
+    };
+  });
+}
+
+/**
+ * Quick pre-scan (first 5 pages) that strips scanner watermarks BEFORE judging
+ * whether the PDF is a real digital text PDF or a photographed/CamScanner PDF.
+ */
 export async function inspectAdminPdf(file: File): Promise<AdminPdfInspect> {
   const buffer = await file.arrayBuffer();
   const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
   const pdfDoc = await loadingTask.promise;
 
-  const samplePages = Math.min(3, pdfDoc.numPages);
+  const samplePages = Math.min(5, pdfDoc.numPages);
   let sampleText = '';
+  let scannedSampleCount = 0;
+  let detectedWatermark: string | null = null;
+
   for (let p = 1; p <= samplePages; p++) {
-    const lines = await extractPageLines(pdfDoc, p);
-    sampleText += lines.map((l) => l.text).join(' ') + '\n';
+    const { cleanLines, detectedWatermark: wm } = await extractNativePageLines(pdfDoc, p);
+    if (wm && !detectedWatermark) detectedWatermark = wm;
+    const pageText = cleanLines.map((l) => l.text).join(' ').trim();
+    if (pageText.length < 45) {
+      scannedSampleCount += 1;
+    } else {
+      sampleText += pageText + '\n';
+    }
   }
 
+  const isScannedPdf = scannedSampleCount >= Math.ceil(samplePages * 0.6);
   const suggestedSubject = detectSubject(file.name, sampleText.slice(0, 2200));
   const suggestedGradeNumber = detectGrade(`${file.name} ${sampleText.slice(0, 2200)}`);
   const totalPages = pdfDoc.numPages;
@@ -252,13 +474,16 @@ export async function inspectAdminPdf(file: File): Promise<AdminPdfInspect> {
     totalPages,
     fileName: file.name,
     fileSizeBytes: file.size,
+    isScannedPdf,
+    detectedWatermark,
   };
 }
 
 function isHeadingCandidate(line: RawTextLine, bodyFontSize: number): boolean {
   const t = line.text.trim();
-  if (t.length < 4 || t.length > 125) return false;
+  if (t.length < 4 || t.length > 110) return false;
   if (/^\d+$/.test(t) || /^(página|pagina|pág\.?)\s*\d+$/i.test(t)) return false;
+  if (isScannerWatermark(t)) return false;
 
   if (
     /^(unidade(\s+temática|\s+didática)?|capítulo|capitulo|tema|lição|licao|parte|secção|seccao)\s+([ivxlcdm]+|\d+)/i.test(
@@ -268,13 +493,29 @@ function isHeadingCandidate(line: RawTextLine, bodyFontSize: number): boolean {
     return true;
   }
 
-  if (/^\d+(\.\d+)?\.?\s+[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ]/.test(t) && t.length <= 95 && !/[.!?]$/.test(t)) {
-    if (line.fontSize >= bodyFontSize * 1.06) return true;
+  if (/^\d+(\.\d+)?\.?\s+[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ]/.test(t) && t.length <= 90 && !/[.!?]$/.test(t)) {
+    if (line.fontSize >= bodyFontSize * 1.05 || line.fromOcr) return true;
   }
 
-  if (line.fontSize >= bodyFontSize * 1.24 && t.length <= 105 && !/[.,;]$/.test(t)) {
+  if (line.fontSize >= bodyFontSize * 1.24 && t.length <= 95 && !/[.,;]$/.test(t)) {
     const words = t.split(/\s+/).length;
-    if (words >= 1 && words <= 14) return true;
+    if (words >= 1 && words <= 12) return true;
+  }
+
+  // OCR-specific heading heuristic (like "Grandezas físicas" in Print 3!):
+  // Short title-like line starting with capital letter, no ending sentence punctuation,
+  // followed by noticeable vertical gap above body text.
+  if (
+    line.fromOcr &&
+    /^[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ]/.test(t) &&
+    t.length >= 6 &&
+    t.length <= 58 &&
+    !/[.,;:!?]$/.test(t) &&
+    line.fontSize >= bodyFontSize * 1.08 &&
+    (line.gapBelow ?? 0) >= bodyFontSize * 0.55
+  ) {
+    const words = t.split(/\s+/).length;
+    if (words >= 2 && words <= 8) return true;
   }
 
   if (
@@ -318,13 +559,16 @@ function buildParagraphsFromLines(
 
   const flush = () => {
     const cleaned = buffer.replace(/\s+/g, ' ').replace(/\s+([.,;:!?])/g, '$1').trim();
-    if (cleaned.length >= 20) paragraphs.push(cleaned);
+    if (cleaned.length >= 20 && !isScannerWatermark(cleaned)) {
+      paragraphs.push(cleaned);
+    }
     buffer = '';
   };
 
   for (const line of lines) {
     const trimmed = line.text.trim();
     if (!trimmed || /^\d{1,4}$/.test(trimmed)) continue;
+    if (isScannerWatermark(trimmed)) continue;
     if (repeatedEdgeLines.has(normalizeForMatch(trimmed))) continue;
 
     if (isHeadingCandidate(line, bodyFontSize)) {
@@ -342,7 +586,7 @@ function buildParagraphsFromLines(
     if (
       buffer.length > 0 &&
       (isBullet ||
-        lineGap > expectedStep * 1.38 ||
+        lineGap > expectedStep * 1.42 ||
         (buffer.length > 380 && prevEnded && lineGap > expectedStep * 1.08))
     ) {
       flush();
@@ -387,7 +631,7 @@ function buildLocalHalfParagraphSummary(title: string, paragraphs: string[], key
   const sentences = fullText
     .split(/(?<=[.!?])\s+(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ0-9])/)
     .map((s) => s.replace(/\s+/g, ' ').trim())
-    .filter((s) => s.length >= 38 && s.length <= 240);
+    .filter((s) => s.length >= 38 && s.length <= 240 && !isScannerWatermark(s));
 
   if (sentences.length === 0) {
     const raw = (paragraphs[0] || `Conteúdo curricular sobre ${title}.`).slice(0, 210);
@@ -398,7 +642,7 @@ function buildLocalHalfParagraphSummary(title: string, paragraphs: string[], key
   }
 
   const kwSet = new Set(keywords.map(normalizeForMatch));
-  const didacticRegex = /\b(é o|é a|define-se|consiste em|designa-se|chama-se|divide-se|permite|fórmula|lei de)\b/i;
+  const didacticRegex = /\b(é o|é a|define-se|consiste em|designa-se|chama-se|divide-se|permite|fórmula|lei de|medição|grandeza)\b/i;
 
   const ranked = sentences
     .map((sentence, idx) => {
@@ -429,59 +673,151 @@ function buildLocalHalfParagraphSummary(title: string, paragraphs: string[], key
 }
 
 /**
- * Admin-only PDF extraction & structural dissection into Curriculum Topics.
- * Produces clean page-indexed drafts ready for server-side Groq ½-paragraph enrichment.
+ * Admin-only Hybrid PDF Dissector:
+ * 1. Strips CamScanner / scanner watermarks automatically.
+ * 2. Extracts native digital text where present.
+ * 3. Automatically runs parallel Portuguese OCR (tesseract.js) with high-contrast
+ *    preprocessing + footer watermark crop on photographed/scanned pages!
  */
 export async function dissectPdfForAdmin(
   file: File,
-  subject: string,
-  onProgress?: (progress: DissectionProgress) => void
+  options: AdminDissectOptions
 ): Promise<AdminDissectResult> {
-  onProgress?.({ stage: 'reading', percent: 6, detail: 'A abrir o documento PDF…' });
+  const { subject, onProgress, enableOcr = true } = options;
+
+  onProgress?.({ stage: 'reading', percent: 4, detail: 'A abrir o documento PDF…' });
 
   const buffer = await file.arrayBuffer();
   const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
   const pdfDoc = await loadingTask.promise;
   const totalPages = pdfDoc.numPages;
 
-  const rawPages: Array<{ pageNumber: number; lines: RawTextLine[] }> = [];
-  const allFontSizes: number[] = [];
-  const edgeLineCounts = new Map<string, number>();
+  const startPage = Math.max(1, Math.min(totalPages, options.startPage ?? 1));
+  const endPage = Math.max(startPage, Math.min(totalPages, options.endPage ?? totalPages));
+  const pageCountToProcess = endPage - startPage + 1;
 
-  for (let p = 1; p <= totalPages; p++) {
-    const lines = await extractPageLines(pdfDoc, p);
-    rawPages.push({ pageNumber: p, lines });
+  // Pass 1: Extract native non-watermark text layer and detect scanned pages
+  const rawPages: Array<{ pageNumber: number; lines: RawTextLine[]; needsOcr: boolean }> = [];
+  let anyWatermarkDetected = Boolean(options.stripBottomWatermark);
 
-    for (const l of lines) {
-      if (l.text.length > 15) allFontSizes.push(Math.round(l.fontSize * 10) / 10);
-    }
+  for (let p = startPage; p <= endPage; p++) {
+    const { cleanLines, detectedWatermark } = await extractNativePageLines(pdfDoc, p);
+    if (detectedWatermark) anyWatermarkDetected = true;
 
-    if (lines.length >= 3) {
-      const topNorm = normalizeForMatch(lines[0].text);
-      const botNorm = normalizeForMatch(lines[lines.length - 1].text);
-      if (topNorm.length > 2 && topNorm.length < 90) edgeLineCounts.set(topNorm, (edgeLineCounts.get(topNorm) ?? 0) + 1);
-      if (botNorm.length > 2 && botNorm.length < 90) edgeLineCounts.set(botNorm, (edgeLineCounts.get(botNorm) ?? 0) + 1);
-    }
+    const cleanCharCount = cleanLines.reduce((acc, l) => acc + l.text.length, 0);
+    const needsOcr = cleanCharCount < 50;
+    rawPages.push({ pageNumber: p, lines: cleanLines, needsOcr });
 
-    if (p % 2 === 0 || p === totalPages) {
+    const doneIdx = p - startPage + 1;
+    if (doneIdx % 4 === 0 || p === endPage) {
       onProgress?.({
         stage: 'reading',
-        percent: Math.round(6 + (p / totalPages) * 44),
+        percent: Math.round(4 + (doneIdx / pageCountToProcess) * 14),
         currentPage: p,
-        totalPages,
-        detail: `A extrair página ${p} de ${totalPages}…`,
+        totalPages: endPage,
+        detail: `A analisar camada de texto (página ${p} de ${endPage})…`,
       });
+    }
+  }
+
+  // Pass 2: Automatic Portuguese OCR for scanned/photographed pages (CamScanner, etc.)
+  const pagesNeedingOcr = rawPages.filter((rp) => rp.needsOcr);
+  let ocrSuccessCount = 0;
+
+  if (pagesNeedingOcr.length > 0 && enableOcr) {
+    onProgress?.({
+      stage: 'ocr',
+      percent: 20,
+      detail: `A inicializar motor OCR em Português para ${pagesNeedingOcr.length} páginas digitalizadas…`,
+    });
+
+    const { createScheduler, createWorker } = await import('tesseract.js');
+    const scheduler = createScheduler();
+    const workerCount = pagesNeedingOcr.length >= 3 ? 2 : 1;
+
+    try {
+      for (let w = 0; w < workerCount; w++) {
+        const worker = await createWorker('por');
+        scheduler.addWorker(worker);
+      }
+
+      let completedOcr = 0;
+
+      // Render canvases sequentially (pdfjs canvas pool) in small batches of workerCount and run OCR in parallel
+      for (let i = 0; i < pagesNeedingOcr.length; i += workerCount) {
+        const chunk = pagesNeedingOcr.slice(i, i + workerCount);
+        const rendered = await Promise.all(
+          chunk.map(async (rp) => ({
+            rp,
+            canvas: await renderPageCanvasForOcr(pdfDoc, rp.pageNumber, anyWatermarkDetected),
+          }))
+        );
+
+        await Promise.all(
+          rendered.map(async ({ rp, canvas }) => {
+            try {
+              const res = await scheduler.addJob('recognize', canvas, {}, { blocks: true });
+              const ocrLines = parseTesseractBlocksToLines(
+                (res.data.blocks as Parameters<typeof parseTesseractBlocksToLines>[0]) ?? null,
+                res.data.text || '',
+                rp.pageNumber
+              );
+              if (ocrLines.length > 0) {
+                rp.lines = ocrLines;
+                ocrSuccessCount += 1;
+              }
+              completedOcr += 1;
+
+              const snippet = ocrLines
+                .slice(0, 2)
+                .map((l) => l.text)
+                .join(' — ')
+                .slice(0, 120);
+
+              onProgress?.({
+                stage: 'ocr',
+                percent: Math.round(22 + (completedOcr / pagesNeedingOcr.length) * 48),
+                currentPage: rp.pageNumber,
+                totalPages: endPage,
+                detail: `OCR em Português: página ${rp.pageNumber} (${completedOcr} de ${pagesNeedingOcr.length})…`,
+                ocrSnippet: snippet || undefined,
+              });
+            } finally {
+              canvas.width = 0;
+              canvas.height = 0;
+            }
+          })
+        );
+      }
+    } finally {
+      await scheduler.terminate();
     }
   }
 
   await loadingTask.destroy();
 
+  // Compute font statistics across extracted lines
+  const allFontSizes: number[] = [];
+  const edgeLineCounts = new Map<string, number>();
+
+  for (const rp of rawPages) {
+    for (const l of rp.lines) {
+      if (l.text.length > 15) allFontSizes.push(Math.round(l.fontSize * 10) / 10);
+    }
+    if (rp.lines.length >= 3) {
+      const topNorm = normalizeForMatch(rp.lines[0].text);
+      const botNorm = normalizeForMatch(rp.lines[rp.lines.length - 1].text);
+      if (topNorm.length > 2 && topNorm.length < 90) edgeLineCounts.set(topNorm, (edgeLineCounts.get(topNorm) ?? 0) + 1);
+      if (botNorm.length > 2 && botNorm.length < 90) edgeLineCounts.set(botNorm, (edgeLineCounts.get(botNorm) ?? 0) + 1);
+    }
+  }
+
   allFontSizes.sort((a, b) => a - b);
-  const bodyFontSize = allFontSizes.length > 0 ? allFontSizes[Math.floor(allFontSizes.length * 0.5)] : 11;
+  const bodyFontSize = allFontSizes.length > 0 ? allFontSizes[Math.floor(allFontSizes.length * 0.5)] : 14;
 
   const repeatedEdgeLines = new Set<string>();
-  if (totalPages >= 4) {
-    const threshold = Math.max(3, Math.floor(totalPages * 0.3));
+  if (rawPages.length >= 4) {
+    const threshold = Math.max(3, Math.floor(rawPages.length * 0.3));
     for (const [normLine, count] of edgeLineCounts.entries()) {
       if (count >= threshold) repeatedEdgeLines.add(normLine);
     }
@@ -489,26 +825,36 @@ export async function dissectPdfForAdmin(
 
   onProgress?.({
     stage: 'cleaning',
-    percent: 58,
-    detail: 'A limpar cabeçalhos repetidos e estruturar parágrafos…',
+    percent: 72,
+    detail: 'A limpar marcas de scanner, cabeçalhos repetidos e estruturar parágrafos…',
   });
 
   const extractedPages: ExtractedPage[] = [];
   let textPages = 0;
-  let scannedPages = 0;
+  let emptyPages = 0;
 
   for (const rp of rawPages) {
     const { paragraphs, headings } = buildParagraphsFromLines(rp.lines, bodyFontSize, repeatedEdgeLines);
     const rawText = rp.lines.map((l) => l.text).join(' ');
-    if (paragraphs.length > 0 || headings.length > 0 || rawText.trim().length > 25) textPages += 1;
-    else scannedPages += 1;
-    extractedPages.push({ pageNumber: rp.pageNumber, lines: rp.lines, paragraphs, headings, rawText });
+    if (paragraphs.length > 0 || headings.length > 0) {
+      textPages += 1;
+    } else {
+      emptyPages += 1;
+    }
+    extractedPages.push({
+      pageNumber: rp.pageNumber,
+      lines: rp.lines,
+      paragraphs,
+      headings,
+      rawText,
+      usedOcr: rp.needsOcr && rp.lines.length > 0,
+    });
   }
 
   onProgress?.({
     stage: 'structuring',
-    percent: 68,
-    detail: 'A organizar temas curriculares com páginas exatas…',
+    percent: 76,
+    detail: 'A segmentar temas curriculares com páginas exatas…',
   });
 
   interface Draft {
@@ -518,6 +864,7 @@ export async function dissectPdfForAdmin(
     pageEnd: number;
     paragraphs: string[];
     pages: TopicPage[];
+    usedOcr: boolean;
   }
 
   const drafts: Draft[] = [];
@@ -528,7 +875,7 @@ export async function dissectPdfForAdmin(
     const paras =
       ep.paragraphs.length > 0
         ? ep.paragraphs
-        : ep.rawText.trim().length > 25
+        : ep.rawText.trim().length > 35 && !isScannerWatermark(ep.rawText)
           ? [ep.rawText.trim()]
           : [];
 
@@ -545,13 +892,14 @@ export async function dissectPdfForAdmin(
           pageEnd: ep.pageNumber,
           paragraphs: [...paras],
           pages: paras.length ? [{ pageNumber: ep.pageNumber, paragraphs: paras }] : [],
+          usedOcr: ep.usedOcr,
         };
         continue;
       }
       if (isUnit) currentUnit = h0;
 
       const curLen = active ? active.paragraphs.join(' ').length : 0;
-      if (!active || curLen >= 240) {
+      if (!active || curLen >= 220) {
         if (active && active.paragraphs.length > 0) drafts.push(active);
         active = {
           title: h0,
@@ -560,6 +908,7 @@ export async function dissectPdfForAdmin(
           pageEnd: ep.pageNumber,
           paragraphs: [...paras],
           pages: paras.length ? [{ pageNumber: ep.pageNumber, paragraphs: paras }] : [],
+          usedOcr: ep.usedOcr,
         };
         continue;
       }
@@ -575,24 +924,27 @@ export async function dissectPdfForAdmin(
         pageEnd: ep.pageNumber,
         paragraphs: [...paras],
         pages: [{ pageNumber: ep.pageNumber, paragraphs: paras }],
+        usedOcr: ep.usedOcr,
       };
-    } else if (ep.pageNumber - active.pageNumber >= 4 && active.paragraphs.join(' ').length >= 1600) {
+    } else if (ep.pageNumber - active.pageNumber >= 3 && active.paragraphs.join(' ').length >= 1400) {
       drafts.push(active);
       const lead = extractKeywords(paras.join(' '), 3);
       active = {
         title: lead.length
           ? lead.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(', ')
-          : `Matéria · Página ${ep.pageNumber}`,
+          : `${subject} · Página ${ep.pageNumber}`,
         unitLabel: currentUnit,
         pageNumber: ep.pageNumber,
         pageEnd: ep.pageNumber,
         paragraphs: [...paras],
         pages: [{ pageNumber: ep.pageNumber, paragraphs: paras }],
+        usedOcr: ep.usedOcr,
       };
     } else {
       active.pageEnd = ep.pageNumber;
       active.paragraphs.push(...paras);
       active.pages.push({ pageNumber: ep.pageNumber, paragraphs: paras });
+      active.usedOcr = active.usedOcr || ep.usedOcr;
     }
   }
 
@@ -600,7 +952,7 @@ export async function dissectPdfForAdmin(
 
   if (drafts.length === 0) {
     throw new Error(
-      'Nenhuma camada de texto selecionável foi encontrada neste PDF (parece ser imagem digitalizada).'
+      'Não foi possível extrair texto legível deste PDF. Verifica se as páginas têm texto nítido ou ativa o OCR automático.'
     );
   }
 
@@ -630,6 +982,7 @@ export async function dissectPdfForAdmin(
       paragraphs: d.paragraphs,
       pages: d.pages,
       readingMinutes: Math.max(1, Math.round(wc / 180)),
+      sourceWasOcr: d.usedOcr,
     };
   });
 
@@ -637,8 +990,10 @@ export async function dissectPdfForAdmin(
     topics,
     stats: {
       totalPages,
+      processedPages: pageCountToProcess,
       textPages,
-      scannedPages,
+      ocrPages: ocrSuccessCount,
+      emptyPages,
       topicsCount: topics.length,
       totalWords,
     },

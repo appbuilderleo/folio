@@ -164,7 +164,9 @@ export function SearchCatalogView({
               />
               <input
                 ref={inputRef}
-                type="search"
+                type="text"
+                inputMode="search"
+                enterKeyHint="search"
                 value={query}
                 onChange={(e) => onQueryChange(e.target.value)}
                 placeholder="Pesquisar matéria, tema ou assunto..."

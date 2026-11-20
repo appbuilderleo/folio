@@ -145,11 +145,10 @@ export function WelcomeHook({ onStartSearch, totalCurriculaCount }: WelcomeHookP
                     type="button"
                     onClick={() => setActiveSpecimenIdx(idx)}
                     aria-pressed={active}
-                    className={`shrink-0 min-h-[34px] px-3 rounded-full text-[12px] font-semibold transition-all duration-200 cursor-pointer ${
-                      active
+                    className={`shrink-0 min-h-[34px] px-3 rounded-full text-[12px] font-semibold transition-all duration-200 cursor-pointer ${active
                         ? 'bg-forest text-ivory'
                         : 'bg-parchment/80 text-ink-soft hover:bg-parchment-deep'
-                    }`}
+                      }`}
                   >
                     {item.chip}
                   </button>

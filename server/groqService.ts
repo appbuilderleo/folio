@@ -19,6 +19,7 @@ interface GroqTopicOutput {
   summaryHalfParagraph?: string;
   keyTakeaways?: string[];
   keywords?: string[];
+  cleanedParagraphs?: string[];
 }
 
 export interface GroqTopicsEnrichResult {
@@ -93,25 +94,34 @@ async function callGroqTopicBatch(
   const apiKey = process.env.GROQ_API_KEY?.trim();
   if (!apiKey) throw new Error('GROQ_API_KEY não configurada');
 
+  const hasOcrTopics = batch.some((b) => b.topic.sourceWasOcr);
+
   const payload = batch.map(({ index, topic }) => ({
     index,
     pageNumber: topic.pageNumber,
     unitLabel: topic.unitLabel ?? '',
     detectedTitle: topic.title,
-    excerpt: topic.paragraphs.join('\n\n').slice(0, 3000),
+    sourceWasOcr: Boolean(topic.sourceWasOcr),
+    paragraphs: topic.sourceWasOcr
+      ? topic.paragraphs.slice(0, 12).map((p) => p.slice(0, 750))
+      : undefined,
+    excerpt: topic.paragraphs.join('\n\n').slice(0, 3200),
   }));
 
   const systemPrompt = [
     'És o editor pedagógico oficial do aplicativo escolar moçambicano Fólio (Sistema Nacional de Educação, 1.ª à 12.ª classe).',
-    'A tua missão é resumir e estruturar matérias curriculares para leitura imediata no telemóvel.',
+    'A tua missão é resumir, limpar erros de digitalização (OCR) e estruturar matérias curriculares para leitura imediata no telemóvel.',
     'REGRAS OBRIGATÓRIAS:',
     '1. Escreve em português de Moçambique (norma europeia/moçambicana: "eletrões", "protões", "neutrões", "iónica", "atómica", sem brasileirismos), adequado à classe indicada.',
-    '2. PROIBIDO usar as palavras "PDF", "livro", "manual", "módulo" ou "ficheiro". Fala sempre em tema, matéria ou assunto.',
+    '2. PROIBIDO usar as palavras "PDF", "livro", "manual", "módulo", "ficheiro" ou marcas de scanner como "CamScanner". Fala sempre em tema, matéria ou assunto.',
     '3. "summaryHalfParagraph" DEVE ter extensão rigorosa de MEIO PARÁGRAFO: exatamente 2 frases objetivas, no máximo 215 caracteres (contando espaços), para caber num cartão de telemóvel.',
     '4. Fidelidade total ao conteúdo do excerto: nunca inventes datas, nomes ou fórmulas.',
-    '5. Devolve APENAS JSON válido neste formato exato:',
-    '{"topics":[{"index":0,"title":"título limpo do tema","summaryHalfParagraph":"2 frases objetivas até 215 caracteres.","keyTakeaways":["ponto concreto 1","ponto concreto 2","ponto concreto 3"],"keywords":["termo1","termo2","termo3","termo4","termo5","termo6"]}]}',
-    '6. Em "keywords", inclui 5 a 7 termos em minúsculas que estudantes ou pais pesquisariam (incluindo sinónimos escolares comuns).',
+    hasOcrTopics
+      ? '5. Quando "sourceWasOcr" for true, devolve também "cleanedParagraphs" corrigindo gralhas evidentes de OCR (ex: letras trocadas, acentos em falta, ruído de margens/fotos) mantendo rigorosamente o texto original completo de cada parágrafo.'
+      : '5. Foca em títulos claros, resumos rigorosos de ½ parágrafo e palavras-chave úteis para busca.',
+    '6. Devolve APENAS JSON válido neste formato exato:',
+    '{"topics":[{"index":0,"title":"título limpo do tema","summaryHalfParagraph":"2 frases objetivas até 215 caracteres.","keyTakeaways":["ponto concreto 1","ponto concreto 2","ponto concreto 3"],"keywords":["termo1","termo2","termo3","termo4","termo5","termo6"],"cleanedParagraphs":["parágrafo 1 corrigido..."]}]}',
+    '7. Em "keywords", inclui 5 a 7 termos em minúsculas que estudantes ou pais pesquisariam (incluindo sinónimos escolares comuns).',
   ].join('\n');
 
   const userPrompt = JSON.stringify({
@@ -129,7 +139,7 @@ async function callGroqTopicBatch(
         const body: Record<string, unknown> = {
           model,
           temperature: 0.2,
-          max_completion_tokens: 2400,
+          max_completion_tokens: hasOcrTopics ? 4200 : 2400,
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: systemPrompt },
@@ -211,7 +221,8 @@ export async function enrichTopicsWithGroq(
     };
   }
 
-  const batchSize = 3;
+  const hasAnyOcr = topics.some((t) => t.sourceWasOcr);
+  const batchSize = hasAnyOcr ? 2 : 3;
   const enrichedByIndex = new Map<number, GroqTopicOutput>();
   const warnings: string[] = [];
   let modelUsed: string | null = null;
@@ -286,6 +297,43 @@ export async function enrichTopicsWithGroq(
           ).slice(0, 8)
         : topic.keywords;
 
+    const cleanedParas =
+      topic.sourceWasOcr &&
+      Array.isArray(ai.cleanedParagraphs) &&
+      ai.cleanedParagraphs.length > 0
+        ? ai.cleanedParagraphs
+            .map((p) => String(p).replace(/\s+/g, ' ').trim())
+            .filter((p) => p.length >= 20 && !/camscanner|scanned\s+by/i.test(p))
+        : null;
+
+    // Only accept Groq cleanedParagraphs if they preserve meaningful volume of the original OCR text
+    const origLen = topic.paragraphs.join(' ').length;
+    const cleanedLen = cleanedParas ? cleanedParas.join(' ').length : 0;
+    const usedCleaned = Boolean(cleanedParas && cleanedLen >= Math.min(120, origLen * 0.45));
+    const finalParagraphs = usedCleaned
+      ? [...cleanedParas!, ...topic.paragraphs.slice(12)]
+      : topic.paragraphs;
+
+    // Keep page-mapped paragraphs synced with Groq-cleaned OCR text so OfflineReader renders spotless prose
+    let finalPages = topic.pages;
+    if (usedCleaned && topic.pages && topic.pages.length > 0) {
+      if (topic.pages.length === 1) {
+        finalPages = [{ ...topic.pages[0], paragraphs: finalParagraphs }];
+      } else {
+        // Proportionally map cleaned paragraphs onto page markers
+        let cursor = 0;
+        finalPages = topic.pages.map((pg, idx) => {
+          const isLast = idx === topic.pages!.length - 1;
+          const count = isLast
+            ? Math.max(0, finalParagraphs.length - cursor)
+            : Math.min(pg.paragraphs.length, Math.max(1, Math.round(finalParagraphs.length / topic.pages!.length)));
+          const slice = finalParagraphs.slice(cursor, cursor + count);
+          cursor += count;
+          return { pageNumber: pg.pageNumber, paragraphs: slice };
+        }).filter((pg) => pg.paragraphs.length > 0);
+      }
+    }
+
     enrichedCount += 1;
 
     return {
@@ -294,6 +342,9 @@ export async function enrichTopicsWithGroq(
       summaryHalfParagraph: summary,
       keyTakeaways: keyTakeaways.length > 0 ? keyTakeaways : topic.keyTakeaways,
       keywords,
+      paragraphs: finalParagraphs,
+      previewParagraphs: finalParagraphs.slice(0, 2),
+      pages: finalPages,
     };
   });
 
