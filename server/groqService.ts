@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import type { Manual, ManualChapter } from '../src/types/folio';
+import type { AdminTopicDraft } from '../src/types/folio';
 
 dotenv.config();
 
@@ -11,18 +11,20 @@ const PREFERRED_MODELS = [
   'openai/gpt-oss-120b',
 ];
 
-export interface GroqEnrichChapterOutput {
-  id: string;
+const MAX_HALF_PARAGRAPH_CHARS = 220;
+
+interface GroqTopicOutput {
+  index: number;
   title?: string;
-  summary?: string;
+  summaryHalfParagraph?: string;
   keyTakeaways?: string[];
   keywords?: string[];
 }
 
-export interface GroqManualEnrichResult {
-  manual: Manual;
-  enrichedChapters: number;
-  totalChapters: number;
+export interface GroqTopicsEnrichResult {
+  topics: AdminTopicDraft[];
+  enrichedCount: number;
+  totalCount: number;
   modelUsed: string | null;
   warnings: string[];
 }
@@ -43,11 +45,33 @@ function getModelCascade(): string[] {
   return Array.from(new Set(list));
 }
 
+/**
+ * Enforces the strict ½-paragraph rule: 2–3 objective sentences, up to ~220 chars.
+ */
+export function clampHalfParagraph(raw: string, maxChars = MAX_HALF_PARAGRAPH_CHARS): string {
+  const clean = raw
+    .replace(/\b(pdf|livro|manual|módulo|modulo|ficheiro)\b/gi, 'matéria')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (clean.length <= maxChars) return clean;
+
+  // Prefer cutting cleanly at a sentence boundary within maxChars
+  const slice = clean.slice(0, maxChars);
+  const lastSentenceEnd = Math.max(slice.lastIndexOf('. '), slice.lastIndexOf('! '), slice.lastIndexOf('? '));
+  if (lastSentenceEnd >= 90) {
+    return slice.slice(0, lastSentenceEnd + 1).trim();
+  }
+
+  // Fallback: cut at word boundary
+  const lastSpace = slice.lastIndexOf(' ');
+  const trimmed = (lastSpace > 80 ? slice.slice(0, lastSpace) : slice).replace(/[,;:\s]+$/, '');
+  return trimmed.endsWith('.') ? trimmed : `${trimmed}…`;
+}
+
 function extractJsonObject(raw: string): unknown {
   let cleaned = raw.trim();
-  // Strip <think>...</think> blocks if emitted by reasoning models
   cleaned = cleaned.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
-  // Strip ```json ... ``` fences
   cleaned = cleaned.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
 
   try {
@@ -62,45 +86,42 @@ function extractJsonObject(raw: string): unknown {
   }
 }
 
-async function callGroqBatch(
-  manual: Pick<Manual, 'title' | 'subject' | 'grade'>,
-  chapters: ManualChapter[]
-): Promise<{ items: GroqEnrichChapterOutput[]; model: string }> {
+async function callGroqTopicBatch(
+  meta: { subject: string; grade: string },
+  batch: Array<{ index: number; topic: AdminTopicDraft }>
+): Promise<{ items: GroqTopicOutput[]; model: string }> {
   const apiKey = process.env.GROQ_API_KEY?.trim();
-  if (!apiKey) {
-    throw new Error('GROQ_API_KEY não configurada');
-  }
+  if (!apiKey) throw new Error('GROQ_API_KEY não configurada');
 
-  const chapterPayload = chapters.map((ch) => ({
-    id: ch.id,
-    pageStart: ch.pageStart,
-    pageEnd: ch.pageEnd,
-    unitLabel: ch.unitLabel ?? '',
-    detectedTitle: ch.title,
-    excerpt: ch.paragraphs.join('\n\n').slice(0, 3200),
+  const payload = batch.map(({ index, topic }) => ({
+    index,
+    pageNumber: topic.pageNumber,
+    unitLabel: topic.unitLabel ?? '',
+    detectedTitle: topic.title,
+    excerpt: topic.paragraphs.join('\n\n').slice(0, 3000),
   }));
 
   const systemPrompt = [
-    'És um editor pedagógico do aplicativo escolar moçambicano Fólio (Sistema Nacional de Educação, 1.ª à 12.ª classe).',
-    'A tua tarefa é adaptar capítulos extraídos de manuais escolares em PDF para busca instantânea por página e estudo rápido no telemóvel.',
-    'Regras obrigatórias:',
-    '1. Escreve em português de Moçambique (norma europeia/moçambicana: "eletrões", "protões", "neutrões", "iónica", "atómica", "tu/você" conforme a classe, sem brasileirismos), adaptado ao nível da classe indicada.',
-    '2. Mantém fidelidade absoluta ao conteúdo do excerto fornecido — nunca inventes factos, datas ou fórmulas que não estejam implícitos no tema.',
-    '3. Devolve APENAS um objeto JSON válido com o formato exato:',
-    '{"chapters":[{"id":"...","title":"título limpo e claro","summary":"resumo didático objetivo em 2 a 3 frases (máx. 320 caracteres) que ajude o aluno a saber se esta é a página que procura","keyTakeaways":["ponto-chave concreto 1","ponto-chave 2","ponto-chave 3"],"keywords":["termo1","termo2","termo3","termo4","termo5","termo6"]}]}',
-    '4. Em "keywords", inclui 5 a 7 termos em minúsculas que alunos ou pais realmente digitariam na busca (incluindo sinónimos curriculares comuns).',
-    '5. Nunca uses travessões longos nem linguagem publicitária.',
+    'És o editor pedagógico oficial do aplicativo escolar moçambicano Fólio (Sistema Nacional de Educação, 1.ª à 12.ª classe).',
+    'A tua missão é resumir e estruturar matérias curriculares para leitura imediata no telemóvel.',
+    'REGRAS OBRIGATÓRIAS:',
+    '1. Escreve em português de Moçambique (norma europeia/moçambicana: "eletrões", "protões", "neutrões", "iónica", "atómica", sem brasileirismos), adequado à classe indicada.',
+    '2. PROIBIDO usar as palavras "PDF", "livro", "manual", "módulo" ou "ficheiro". Fala sempre em tema, matéria ou assunto.',
+    '3. "summaryHalfParagraph" DEVE ter extensão rigorosa de MEIO PARÁGRAFO: exatamente 2 frases objetivas, no máximo 215 caracteres (contando espaços), para caber num cartão de telemóvel.',
+    '4. Fidelidade total ao conteúdo do excerto: nunca inventes datas, nomes ou fórmulas.',
+    '5. Devolve APENAS JSON válido neste formato exato:',
+    '{"topics":[{"index":0,"title":"título limpo do tema","summaryHalfParagraph":"2 frases objetivas até 215 caracteres.","keyTakeaways":["ponto concreto 1","ponto concreto 2","ponto concreto 3"],"keywords":["termo1","termo2","termo3","termo4","termo5","termo6"]}]}',
+    '6. Em "keywords", inclui 5 a 7 termos em minúsculas que estudantes ou pais pesquisariam (incluindo sinónimos escolares comuns).',
   ].join('\n');
 
   const userPrompt = JSON.stringify({
-    manualTitle: manual.title,
-    subject: manual.subject,
-    grade: manual.grade,
-    chapters: chapterPayload,
+    subject: meta.subject,
+    grade: meta.grade,
+    topics: payload,
   });
 
   const models = getModelCascade();
-  let lastError = 'Falha desconhecida ao contactar Groq';
+  let lastError = 'Falha ao contactar Groq';
 
   for (const model of models) {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -116,7 +137,6 @@ async function callGroqBatch(
           ],
         };
 
-        // Keep gpt-oss reasoning crisp so tokens go directly into the structured JSON output
         if (model.includes('gpt-oss')) {
           body.reasoning_effort = 'low';
         }
@@ -144,26 +164,23 @@ async function callGroqBatch(
         };
 
         if (!res.ok) {
-          lastError = data.error?.message || `HTTP ${res.status} no modelo ${model}`;
-          break; // try next fallback model
+          lastError = data.error?.message || `HTTP ${res.status} (${model})`;
+          break;
         }
 
         const content = data.choices?.[0]?.message?.content;
         if (!content) {
-          lastError = `Resposta vazia do modelo ${model}`;
+          lastError = `Resposta vazia (${model})`;
           break;
         }
 
-        const parsed = extractJsonObject(content) as { chapters?: GroqEnrichChapterOutput[] };
-        if (!parsed || !Array.isArray(parsed.chapters)) {
-          lastError = `Estrutura JSON inesperada do modelo ${model}`;
+        const parsed = extractJsonObject(content) as { topics?: GroqTopicOutput[] };
+        if (!parsed || !Array.isArray(parsed.topics)) {
+          lastError = `JSON sem array topics (${model})`;
           break;
         }
 
-        return {
-          items: parsed.chapters,
-          model: data.model || model,
-        };
+        return { items: parsed.topics, model: data.model || model };
       } catch (err) {
         lastError = err instanceof Error ? err.message : String(err);
       }
@@ -174,111 +191,116 @@ async function callGroqBatch(
 }
 
 /**
- * Enriches all chapters of a dissected Manual in small batches (3 chapters/request)
- * using Groq free-tier models. Preserves local extractive summaries for any chapter
- * that fails so ingestion never breaks.
+ * Generates strict ½-paragraph (≤220 chars) summaries, key takeaways,
+ * and search synonyms for curriculum topics in batches of 3 via Groq.
  */
-export async function enrichManualWithGroq(manual: Manual): Promise<GroqManualEnrichResult> {
+export async function enrichTopicsWithGroq(
+  meta: { subject: string; grade: string },
+  topics: AdminTopicDraft[]
+): Promise<GroqTopicsEnrichResult> {
   if (!isGroqConfigured()) {
     return {
-      manual,
-      enrichedChapters: 0,
-      totalChapters: manual.chapters.length,
+      topics: topics.map((t) => ({
+        ...t,
+        summaryHalfParagraph: clampHalfParagraph(t.summaryHalfParagraph),
+      })),
+      enrichedCount: 0,
+      totalCount: topics.length,
       modelUsed: null,
       warnings: ['GROQ_API_KEY não configurada no servidor.'],
     };
   }
 
   const batchSize = 3;
-  const enrichedMap = new Map<string, GroqEnrichChapterOutput>();
+  const enrichedByIndex = new Map<number, GroqTopicOutput>();
   const warnings: string[] = [];
   let modelUsed: string | null = null;
 
-  // Cap at 36 chapters per single upload batch to protect free-tier rate limits
-  const eligibleChapters = manual.chapters.slice(0, 36);
-  if (manual.chapters.length > 36) {
-    warnings.push(
-      `Os primeiros 36 capítulos foram enriquecidos em lote com Groq; os restantes mantiveram o resumo local rápido.`
-    );
+  const limit = Math.min(topics.length, 36);
+  if (topics.length > 36) {
+    warnings.push('Os primeiros 36 temas foram resumidos pela Groq; os restantes usaram resumo base.');
   }
 
-  for (let i = 0; i < eligibleChapters.length; i += batchSize) {
-    const batch = eligibleChapters.slice(i, i + batchSize);
+  for (let i = 0; i < limit; i += batchSize) {
+    const batch = [];
+    for (let j = i; j < Math.min(limit, i + batchSize); j++) {
+      batch.push({ index: j, topic: topics[j] });
+    }
+
     try {
-      const { items, model } = await callGroqBatch(manual, batch);
+      const { items, model } = await callGroqTopicBatch(meta, batch);
       modelUsed = modelUsed || model;
       for (const item of items) {
-        if (item && typeof item.id === 'string') {
-          enrichedMap.set(item.id, item);
+        if (item && typeof item.index === 'number') {
+          enrichedByIndex.set(item.index, item);
         }
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      warnings.push(`Lote ${Math.floor(i / batchSize) + 1}: ${msg}`);
+      warnings.push(
+        `Lote ${Math.floor(i / batchSize) + 1}: ${err instanceof Error ? err.message : String(err)}`
+      );
     }
 
-    // Gentle pacing between batches to stay comfortably inside Groq free-tier RPM
-    if (i + batchSize < eligibleChapters.length) {
-      await new Promise((r) => setTimeout(r, 280));
+    if (i + batchSize < limit) {
+      await new Promise((r) => setTimeout(r, 260));
     }
   }
 
   let enrichedCount = 0;
 
-  const updatedChapters: ManualChapter[] = manual.chapters.map((ch) => {
-    const ai = enrichedMap.get(ch.id);
-    if (!ai) return ch;
+  const updatedTopics = topics.map((topic, idx) => {
+    const ai = enrichedByIndex.get(idx);
+    if (!ai) {
+      return {
+        ...topic,
+        summaryHalfParagraph: clampHalfParagraph(topic.summaryHalfParagraph),
+      };
+    }
 
-    const cleanSummary =
-      typeof ai.summary === 'string' && ai.summary.trim().length >= 30
-        ? ai.summary.trim()
-        : ch.summary;
+    const summary =
+      typeof ai.summaryHalfParagraph === 'string' && ai.summaryHalfParagraph.trim().length >= 25
+        ? clampHalfParagraph(ai.summaryHalfParagraph)
+        : clampHalfParagraph(topic.summaryHalfParagraph);
 
-    const cleanTitle =
+    const title =
       typeof ai.title === 'string' && ai.title.trim().length >= 3 && ai.title.trim().length <= 130
         ? ai.title.trim()
-        : ch.title;
+        : topic.title;
 
-    const cleanTakeaways =
+    const keyTakeaways =
       Array.isArray(ai.keyTakeaways) && ai.keyTakeaways.length > 0
         ? ai.keyTakeaways
-            .map((t) => String(t).trim())
-            .filter((t) => t.length >= 10)
+            .map((k) => String(k).trim())
+            .filter((k) => k.length >= 8)
             .slice(0, 4)
-        : ch.keyTakeaways;
+        : topic.keyTakeaways;
 
-    const cleanKeywords =
+    const keywords =
       Array.isArray(ai.keywords) && ai.keywords.length > 0
         ? Array.from(
             new Set(
-              [...ai.keywords.map((k) => String(k).trim().toLowerCase()), ...ch.keywords].filter(
+              [...ai.keywords.map((k) => String(k).trim().toLowerCase()), ...topic.keywords].filter(
                 (k) => k.length >= 3
               )
             )
           ).slice(0, 8)
-        : ch.keywords;
+        : topic.keywords;
 
     enrichedCount += 1;
 
     return {
-      ...ch,
-      title: cleanTitle,
-      summary: cleanSummary,
-      keyTakeaways: cleanTakeaways.length > 0 ? cleanTakeaways : ch.keyTakeaways,
-      keywords: cleanKeywords,
-      summarySource: 'groq',
+      ...topic,
+      title,
+      summaryHalfParagraph: summary,
+      keyTakeaways: keyTakeaways.length > 0 ? keyTakeaways : topic.keyTakeaways,
+      keywords,
     };
   });
 
   return {
-    manual: {
-      ...manual,
-      aiEnriched: enrichedCount > 0,
-      aiModel: enrichedCount > 0 ? modelUsed ?? getPreferredGroqModel() : manual.aiModel,
-      chapters: updatedChapters,
-    },
-    enrichedChapters: enrichedCount,
-    totalChapters: manual.chapters.length,
+    topics: updatedTopics,
+    enrichedCount,
+    totalCount: topics.length,
     modelUsed,
     warnings,
   };

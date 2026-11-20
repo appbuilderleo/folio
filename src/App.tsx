@@ -1,196 +1,327 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { AuthSheet } from './components/AuthSheet';
 import { CheckoutSheet } from './components/CheckoutSheet';
 import { EditorialPreviewView } from './components/EditorialPreviewView';
 import { OfflineReaderView } from './components/OfflineReaderView';
 import { SearchCatalogView } from './components/SearchCatalogView';
 import { SplashScreen } from './components/SplashScreen';
 import { WelcomeHook } from './components/WelcomeHook';
-
-const PdfUploadModal = lazy(() =>
-  import('./components/PdfUploadModal').then((m) => ({ default: m.PdfUploadModal }))
-);
-import { SEED_MANUALS } from './data/seedManuals';
 import {
-  checkBackendHealth,
-  deleteManualFromCloud,
-  enrichManualWithCloudAI,
-  fetchManualsFromCloud,
-  recordUnlockInCloud,
-  saveManualToCloud,
-  type BackendHealth,
+  fetchCurrentSession,
+  fetchMySubjects,
+  fetchProtectedCurriculumContent,
+  fetchTopics,
+  logoutAccount,
+  type MySubjectOverview,
 } from './lib/apiClient';
 import {
-  deleteManualFromOfflineVault,
+  loadAllOfflineCurriculaForUser,
   loadBookmarks,
-  loadOfflineVaultManuals,
-  loadUnlockReceipts,
-  saveManualToOfflineVault,
-  saveUnlockReceipt,
+  loadCurriculumFromOfflineVault,
+  saveCurriculumToOfflineVault,
   toggleBookmarkEntry,
 } from './lib/offlineStore';
 import type {
+  AuthSessionState,
   BookmarkEntry,
-  Manual,
-  ManualChapter,
-  SearchHit,
+  SchoolCycle,
+  TopicSearchItem,
+  UnlockedCurriculum,
+  UnlockedTopic,
   UnlockReceipt,
 } from './types/folio';
 
+// Strictly isolated admin bundle — public students NEVER download pdfjs-dist or admin UI
+const AdminPanel = lazy(() =>
+  import('./components/AdminPanel').then((m) => ({ default: m.AdminPanel }))
+);
+
 type Stage = 'splash' | 'welcome' | 'catalog' | 'preview' | 'reader';
 
-interface ActiveSelection {
-  manualId: string;
-  chapterId: string;
-  pageNumber: number;
-  justUnlocked?: boolean;
-}
-
-function mergeManualLists(...lists: Manual[][]): Manual[] {
-  const byId = new Map<string, Manual>();
-  for (const list of lists) {
-    for (const m of list) {
-      byId.set(m.id, m);
-    }
-  }
-  return Array.from(byId.values()).sort((a, b) => {
-    if (a.sourceType !== b.sourceType) {
-      return a.sourceType === 'pdf_upload' ? -1 : 1;
-    }
-    return b.createdAt.localeCompare(a.createdAt);
-  });
-}
-
 export function App() {
+  // Isolated route check for /admin (invisible from public UI)
+  const isAdminRoute =
+    typeof window !== 'undefined' &&
+    window.location.pathname.replace(/\/+$/, '') === '/admin';
+
+  if (isAdminRoute) {
+    return (
+      <Suspense
+        fallback={
+          <div className="min-h-dvh flex items-center justify-center bg-parchment text-[14px] font-bold text-forest">
+            A abrir painel administrativo…
+          </div>
+        }
+      >
+        <AdminPanel />
+      </Suspense>
+    );
+  }
+
+  return <StudentApp />;
+}
+
+function StudentApp() {
   const [stage, setStage] = useState<Stage>('splash');
   const [catalogTab, setCatalogTab] = useState<'search' | 'library'>('search');
-  const [searchQuery, setSearchQuery] = useState('');
-  const [manuals, setManuals] = useState<Manual[]>(SEED_MANUALS);
-  const [unlocks, setUnlocks] = useState<Record<string, UnlockReceipt>>(() => loadUnlockReceipts());
+
+  // Lightweight search state (3G/4G friendly)
+  const [query, setQuery] = useState('');
+  const [cycle, setCycle] = useState<SchoolCycle>('all');
+  const [topics, setTopics] = useState<TopicSearchItem[]>([]);
+  const [totalCurricula, setTotalCurricula] = useState(0);
+  const [loadingTopics, setLoadingTopics] = useState(true);
+
+  // Auth & Minhas Matérias
+  const [session, setSession] = useState<AuthSessionState | null>(null);
+  const [mySubjects, setMySubjects] = useState<MySubjectOverview[]>([]);
+  const [loadingSubjects, setLoadingSubjects] = useState(false);
   const [bookmarks, setBookmarks] = useState<BookmarkEntry[]>(() => loadBookmarks());
-  const [backendHealth, setBackendHealth] = useState<BackendHealth>({
-    online: false,
-    dbConnected: false,
-  });
 
-  const [selection, setSelection] = useState<ActiveSelection | null>(null);
+  // Preview / Checkout / Auth Gate / Reader state
+  const [previewTopic, setPreviewTopic] = useState<TopicSearchItem | null>(null);
+  const [authModal, setAuthModal] = useState<{
+    open: boolean;
+    title: string;
+    reason: string;
+    defaultMode: 'login' | 'register';
+    pendingAction?: 'checkout' | 'none';
+  }>({ open: false, title: '', reason: '', defaultMode: 'register' });
   const [showCheckout, setShowCheckout] = useState(false);
-  const [showPdfStudio, setShowPdfStudio] = useState(false);
 
-  // Hydrate offline IndexedDB vault + CockroachDB cloud manuals
+  const [readerState, setReaderState] = useState<{
+    curriculum: UnlockedCurriculum;
+    topic: UnlockedTopic;
+    pageNumber?: number;
+    justUnlocked: boolean;
+  } | null>(null);
+  const [openingReader, setOpeningReader] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
+  const toastTimer = useRef<number | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 4200);
+  }, []);
+
+  // 1. Restore session cleanly on load (if token exists)
   useEffect(() => {
     let active = true;
-
-    async function hydrate() {
-      const [localManuals, health, cloudManuals] = await Promise.all([
-        loadOfflineVaultManuals(),
-        checkBackendHealth(),
-        fetchManualsFromCloud(),
-      ]);
-
-      if (!active) return;
-
-      setBackendHealth(health);
-
-      const uploadedLocal = localManuals.filter((m) => m.sourceType === 'pdf_upload');
-      const uploadedCloud = (cloudManuals ?? []).filter((m) => m.sourceType === 'pdf_upload');
-
-      if (uploadedLocal.length > 0 || uploadedCloud.length > 0) {
-        setManuals(mergeManualLists(SEED_MANUALS, uploadedLocal, uploadedCloud));
-      }
-    }
-
-    void hydrate();
+    void fetchCurrentSession().then((s) => {
+      if (active && s) setSession(s);
+    });
     return () => {
       active = false;
     };
   }, []);
 
-  const isUnlocked = useCallback(
-    (manual: Manual) => Boolean(manual.defaultUnlocked || unlocks[manual.id]),
-    [unlocks]
+  // 2. Fetch lightweight search topics from CockroachDB API (debounced for 3G/4G)
+  const reloadTopics = useCallback(
+    async (qVal: string, cycleVal: SchoolCycle) => {
+      setLoadingTopics(true);
+      try {
+        const res = await fetchTopics(qVal, cycleVal);
+        setTopics(res.topics);
+        setTotalCurricula(res.totalCurricula);
+      } catch {
+        // Keep current topics if momentarily offline
+      } finally {
+        setLoadingTopics(false);
+      }
+    },
+    []
   );
 
-  const selectedManual = selection
-    ? manuals.find((m) => m.id === selection.manualId) ?? null
-    : null;
+  useEffect(() => {
+    const t = window.setTimeout(() => {
+      void reloadTopics(query, cycle);
+    }, query ? 220 : 0);
+    return () => window.clearTimeout(t);
+  }, [query, cycle, session?.user.id, reloadTopics]);
 
-  const selectedChapter =
-    selectedManual && selection
-      ? selectedManual.chapters.find((c) => c.id === selection.chapterId) ??
-        selectedManual.chapters[0] ??
-        null
-      : null;
+  // 3. Load authenticated user's unlocked subjects (with encrypted IndexedDB offline fallback!)
+  const reloadMySubjects = useCallback(async (activeSession: AuthSessionState | null) => {
+    if (!activeSession) {
+      setMySubjects([]);
+      return;
+    }
+    setLoadingSubjects(true);
+    try {
+      const list = await fetchMySubjects();
+      setMySubjects(list);
+    } catch {
+      // Offline fallback: show locally encrypted subjects from IndexedDB!
+      const cached = await loadAllOfflineCurriculaForUser(activeSession.user.id);
+      setMySubjects(
+        cached.map((c) => ({
+          id: c.id,
+          subject: c.subject,
+          grade: c.grade,
+          gradeNumber: c.gradeNumber,
+          cycle: c.cycle,
+          totalPages: c.totalPages,
+          priceMt: c.priceMt,
+          paymentProvider: c.paymentProvider ?? 'mpesa',
+          transactionRef: c.transactionRef ?? 'OFFLINE',
+          unlockedAt: c.unlockedAt ?? new Date().toISOString(),
+          topics: c.topics.map((t) => ({ id: t.id, title: t.title, pageNumber: t.pageNumber })),
+        }))
+      );
+    } finally {
+      setLoadingSubjects(false);
+    }
+  }, []);
 
-  const handleOpenManualChapter = useCallback(
-    (manual: Manual, chapter: ManualChapter, pageNumber?: number) => {
-      const targetPage = pageNumber ?? chapter.pageStart;
-      setSelection({
-        manualId: manual.id,
-        chapterId: chapter.id,
-        pageNumber: targetPage,
-        justUnlocked: false,
+  useEffect(() => {
+    void reloadMySubjects(session);
+  }, [session, reloadMySubjects]);
+
+  // Open an unlocked curriculum (loads encrypted IndexedDB first or fetches protected content from server)
+  const openUnlockedCurriculum = useCallback(
+    async (
+      curriculumId: string,
+      targetTopicId?: string,
+      targetPage?: number,
+      justUnlocked = false,
+      activeSessionOverride?: AuthSessionState | null
+    ) => {
+      const activeSession = activeSessionOverride ?? session;
+      if (!activeSession) return;
+
+      setOpeningReader(true);
+      try {
+        let full: UnlockedCurriculum | null = null;
+
+        if (!justUnlocked) {
+          full = await loadCurriculumFromOfflineVault(activeSession.user.id, curriculumId);
+        }
+
+        if (!full) {
+          full = await fetchProtectedCurriculumContent(curriculumId);
+          await saveCurriculumToOfflineVault(activeSession.user.id, full);
+        }
+
+        const chosenTopic =
+          (targetTopicId ? full.topics.find((t) => t.id === targetTopicId) : null) ??
+          full.topics[0];
+
+        if (!chosenTopic) {
+          showToast('Esta matéria ainda não tem temas disponíveis.');
+          return;
+        }
+
+        setReaderState({
+          curriculum: full,
+          topic: chosenTopic,
+          pageNumber: targetPage ?? chosenTopic.pageNumber,
+          justUnlocked,
+        });
+        setStage('reader');
+      } catch (err) {
+        showToast(err instanceof Error ? err.message : 'Não foi possível abrir a matéria offline.');
+      } finally {
+        setOpeningReader(false);
+      }
+    },
+    [session, showToast]
+  );
+
+  // Clicking a search card: unlocked -> Reader; locked -> Free Editorial Preview (no login needed!)
+  const handleSelectTopic = useCallback(
+    (topic: TopicSearchItem) => {
+      if (topic.unlocked && session) {
+        void openUnlockedCurriculum(topic.curriculumId, topic.id, topic.pageNumber, false);
+      } else {
+        setPreviewTopic(topic);
+        setStage('preview');
+      }
+    },
+    [session, openUnlockedCurriculum]
+  );
+
+  // Clicking "Desbloquear Matéria Completa — 17 MT": Auth gate first if visitor, else straight to M-Pesa/e-Mola!
+  const handleRequestUnlock = useCallback(() => {
+    if (!previewTopic) return;
+    if (!session) {
+      setAuthModal({
+        open: true,
+        title: 'Entra para desbloquear',
+        reason: `Cria uma conta rápida ou entra com o teu e-mail para vincular ${previewTopic.subject} (${previewTopic.grade}) à tua conta e estudar offline em qualquer dispositivo.`,
+        defaultMode: 'register',
+        pendingAction: 'checkout',
       });
-      setStage(isUnlocked(manual) ? 'reader' : 'preview');
-    },
-    [isUnlocked]
-  );
+      return;
+    }
+    setShowCheckout(true);
+  }, [previewTopic, session]);
 
-  const handleSelectHit = useCallback(
-    (hit: SearchHit) => {
-      handleOpenManualChapter(hit.manual, hit.chapter, hit.matchedPage);
+  const handleAuthSuccess = useCallback(
+    (nextSession: AuthSessionState) => {
+      setSession(nextSession);
+      const pending = authModal.pendingAction;
+      setAuthModal((curr) => ({ ...curr, open: false, pendingAction: 'none' }));
+
+      if (nextSession.evictedOldSession) {
+        showToast('Sessão iniciada. A sessão mais antiga foi encerrada (limite de 2 dispositivos).');
+      }
+
+      if (pending === 'checkout' && previewTopic) {
+        const alreadyOwned =
+          nextSession.user.role === 'admin' ||
+          nextSession.unlockedCurriculumIds.includes(previewTopic.curriculumId);
+        if (alreadyOwned) {
+          showToast('Esta matéria já está desbloqueada na tua conta!');
+          void openUnlockedCurriculum(
+            previewTopic.curriculumId,
+            previewTopic.id,
+            previewTopic.pageNumber,
+            false,
+            nextSession
+          );
+        } else {
+          setShowCheckout(true);
+        }
+      }
     },
-    [handleOpenManualChapter]
+    [authModal.pendingAction, previewTopic, openUnlockedCurriculum, showToast]
   );
 
   const handleUnlockSuccess = useCallback(
-    async (receipt: UnlockReceipt) => {
-      const nextUnlocks = saveUnlockReceipt(receipt);
-      setUnlocks(nextUnlocks);
+    async (_receipt: UnlockReceipt) => {
       setShowCheckout(false);
+      if (!previewTopic || !session) return;
 
-      if (selectedManual) {
-        // Encrypt and save into offline IndexedDB sandbox
-        void saveManualToOfflineVault(selectedManual);
-        // Log sync receipt in CockroachDB asynchronously
-        void recordUnlockInCloud({
-          manualId: selectedManual.id,
-          operator: receipt.operator,
-          phone: receipt.phone,
-          amountMt: receipt.amountMt,
-          reference: receipt.reference,
-        });
-      }
+      const updatedSession: AuthSessionState = {
+        ...session,
+        unlockedCurriculumIds: Array.from(
+          new Set([...session.unlockedCurriculumIds, previewTopic.curriculumId])
+        ),
+      };
+      setSession(updatedSession);
+      void reloadTopics(query, cycle);
+      void reloadMySubjects(updatedSession);
 
-      setSelection((curr) => (curr ? { ...curr, justUnlocked: true } : curr));
-      setStage('reader');
+      await openUnlockedCurriculum(
+        previewTopic.curriculumId,
+        previewTopic.id,
+        previewTopic.pageNumber,
+        true,
+        updatedSession
+      );
     },
-    [selectedManual]
+    [previewTopic, session, query, cycle, reloadTopics, reloadMySubjects, openUnlockedCurriculum]
   );
 
-  const handleManualDissected = useCallback(async (manual: Manual) => {
-    setManuals((prev) => mergeManualLists(prev, [manual]));
-    await saveManualToOfflineVault(manual);
-    const cloudSaved = await saveManualToCloud(manual);
-    return { cloudSaved };
-  }, []);
-
-  const handleDeleteUploadedManual = useCallback(async (manualId: string) => {
-    setManuals((prev) => prev.filter((m) => m.id !== manualId));
-    await deleteManualFromOfflineVault(manualId);
-    void deleteManualFromCloud(manualId);
-  }, []);
-
-  const handleEnrichManualWithAI = useCallback(async (manual: Manual) => {
-    const res = await enrichManualWithCloudAI(manual);
-    if (!res || res.enrichedChapters === 0) return;
-    setManuals((prev) => mergeManualLists(prev, [res.manual]));
-    await saveManualToOfflineVault(res.manual);
-    void saveManualToCloud(res.manual);
-  }, []);
+  const handleLogout = useCallback(async () => {
+    await logoutAccount();
+    setSession(null);
+    setMySubjects([]);
+    showToast('Sessão encerrada com segurança.');
+  }, [showToast]);
 
   const handleToggleBookmark = useCallback((entry: BookmarkEntry) => {
-    const next = toggleBookmarkEntry(entry);
-    setBookmarks(next);
+    setBookmarks(toggleBookmarkEntry(entry));
   }, []);
 
   const handleCompleteSplash = useCallback(() => {
@@ -203,104 +334,108 @@ export function App() {
 
       {stage === 'welcome' && (
         <WelcomeHook
-          totalCatalogCount={manuals.length}
+          totalCurriculaCount={totalCurricula}
           onStartSearch={(initial) => {
-            if (initial) setSearchQuery(initial);
+            if (initial) setQuery(initial);
             setCatalogTab('search');
             setStage('catalog');
           }}
-          onOpenPdfUpload={() => setShowPdfStudio(true)}
         />
       )}
 
       {stage === 'catalog' && (
         <SearchCatalogView
-          manuals={manuals}
-          initialQuery={searchQuery}
+          topics={topics}
+          loadingTopics={loadingTopics}
+          query={query}
+          onQueryChange={setQuery}
+          cycle={cycle}
+          onCycleChange={setCycle}
           activeTab={catalogTab}
           onTabChange={setCatalogTab}
-          unlocks={unlocks}
+          session={session}
+          mySubjects={mySubjects}
+          loadingSubjects={loadingSubjects}
           bookmarks={bookmarks}
-          backendHealth={backendHealth}
-          onSelectHit={handleSelectHit}
-          onOpenManualChapter={handleOpenManualChapter}
-          onOpenPdfUpload={() => setShowPdfStudio(true)}
-          onDeleteUploadedManual={handleDeleteUploadedManual}
-          onEnrichManualWithAI={handleEnrichManualWithAI}
+          onSelectTopic={handleSelectTopic}
+          onOpenUnlockedSubject={(cid, tid, pg) => {
+            void openUnlockedCurriculum(cid, tid, pg, false);
+          }}
+          onAuthSuccess={handleAuthSuccess}
+          onOpenLoginModal={() =>
+            setAuthModal({
+              open: true,
+              title: 'Aceder à tua conta',
+              reason: 'Entra ou cria conta para sincronizar as tuas matérias desbloqueadas.',
+              defaultMode: 'login',
+              pendingAction: 'none',
+            })
+          }
+          onLogout={() => void handleLogout()}
           onBackToHome={() => setStage('welcome')}
         />
       )}
 
-      {stage === 'preview' && selectedManual && selectedChapter && (
+      {stage === 'preview' && previewTopic && (
         <EditorialPreviewView
-          manual={selectedManual}
-          chapter={selectedChapter}
-          matchedPage={selection?.pageNumber ?? selectedChapter.pageStart}
+          topic={previewTopic}
           onBack={() => setStage('catalog')}
-          onOpenCheckout={() => setShowCheckout(true)}
+          onRequestUnlock={handleRequestUnlock}
         />
       )}
 
-      {stage === 'reader' && selectedManual && selectedChapter && (
+      {stage === 'reader' && readerState && (
         <OfflineReaderView
-          manual={selectedManual}
-          chapter={selectedChapter}
-          initialPage={selection?.pageNumber}
-          justUnlocked={Boolean(selection?.justUnlocked)}
+          curriculum={readerState.curriculum}
+          topic={readerState.topic}
+          initialPage={readerState.pageNumber}
+          justUnlocked={readerState.justUnlocked}
           bookmarks={bookmarks}
           onToggleBookmark={handleToggleBookmark}
-          onSelectChapter={(ch) =>
-            setSelection({
-              manualId: selectedManual.id,
-              chapterId: ch.id,
-              pageNumber: ch.pageStart,
-              justUnlocked: false,
-            })
+          onSelectTopic={(t) =>
+            setReaderState((curr) =>
+              curr ? { ...curr, topic: t, pageNumber: t.pageNumber, justUnlocked: false } : null
+            )
           }
           onBack={() => setStage('catalog')}
         />
       )}
 
-      {showCheckout && selectedManual && (
-        <CheckoutSheet
-          manual={selectedManual}
-          onClose={() => setShowCheckout(false)}
-          onUnlockSuccess={handleUnlockSuccess}
+      {authModal.open && (
+        <AuthSheet
+          title={authModal.title}
+          reason={authModal.reason}
+          defaultMode={authModal.defaultMode}
+          onClose={() => setAuthModal((curr) => ({ ...curr, open: false, pendingAction: 'none' }))}
+          onSuccess={handleAuthSuccess}
         />
       )}
 
-      {showPdfStudio && (
-        <Suspense
-          fallback={
-            <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/45 backdrop-blur-[2px]">
-              <div className="rounded-2xl bg-ivory border border-sand px-5 py-4 text-[14px] font-bold text-forest shadow-lg">
-                A abrir Estúdio PDF…
-              </div>
-            </div>
-          }
+      {showCheckout && previewTopic && session && (
+        <CheckoutSheet
+          topic={previewTopic}
+          userEmail={session.user.email}
+          onClose={() => setShowCheckout(false)}
+          onUnlockSuccess={(receipt) => void handleUnlockSuccess(receipt)}
+        />
+      )}
+
+      {openingReader && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-ink/40 backdrop-blur-[2px]">
+          <div className="rounded-2xl bg-ivory border border-sand px-5 py-4 text-[14px] font-bold text-forest shadow-lg">
+            A abrir matéria offline…
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed top-4 left-1/2 -translate-x-1/2 z-50 max-w-[92vw] rounded-2xl bg-forest text-ivory border border-amber/40 px-4 py-3 text-[13px] font-semibold shadow-xl"
         >
-          <PdfUploadModal
-            groqEnabled={Boolean(backendHealth.groqEnabled)}
-            groqModel={backendHealth.groqModel}
-            onClose={() => setShowPdfStudio(false)}
-            onManualDissected={handleManualDissected}
-            onOpenManualNow={(manual) => {
-              setShowPdfStudio(false);
-              if (manual.chapters[0]) {
-                handleOpenManualChapter(manual, manual.chapters[0], manual.chapters[0].pageStart);
-              } else {
-                setCatalogTab('library');
-                setStage('catalog');
-              }
-            }}
-            onSearchManual={(manual) => {
-              setShowPdfStudio(false);
-              setSearchQuery(manual.subject);
-              setCatalogTab('search');
-              setStage('catalog');
-            }}
-          />
-        </Suspense>
+          {toast}
+        </div>
       )}
     </>
   );

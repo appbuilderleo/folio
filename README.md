@@ -1,36 +1,34 @@
 # Fólio — A página certa para cada dúvida
 
-Webapp educacional *mobile-first* desenvolvido para o currículo escolar de Moçambique (**1.ª à 12.ª classe**). Permite pesquisar qualquer tema escolar, ler o resumo didático e a pré-visualização da página exata, carregar livros em PDF para dissecção automática em capítulos/resumos e sincronizar manuais para leitura **100% offline encriptada**.
+Plataforma móvel (Web/PWA) de busca e estudo de **matérias curriculares** do Sistema Nacional de Educação (SNE) de Moçambique (**1.ª à 12.ª classe**).
 
-## Funcionalidades
+## Regras de Negócio & Arquitetura
 
-- **Fluxo Mobile-First em 4 Estágios**: Splash screen, tela inicial de gancho com *Folha de Fólio* interativa, motor de busca curricular (com filtros por ciclo escolar e *Skeleton Shimmer*), pré-visualização editorial + checkout fintech (**M-Pesa** Vodacom 84/85 e **e-Mola** Movitel 86/87) e leitor didático offline.
-- **Carregamento e Dissecção de Livros em PDF**: Extração página a página via `pdfjs-dist`, limpeza tipográfica, deteção automática de unidades/capítulos/disciplina/classe, geração de resumos didáticos, pontos-chave e conceitos indexados.
-- **Leitor Adaptável Offline**: Temas **Papel** (`#f3ebd6`), **Sépia** (`#ebe0c5`) e **Noite** (`#041a11`), ajuste de fonte (`A-` / `A+`), marcadores de página, índice de capítulos e armazenamento encriptado offline (**AES-GCM + IndexedDB**).
-- **Persistência em CockroachDB**: API Node.js + Express ligada ao CockroachDB (`folio_manuals`, `folio_chapters`, `folio_unlocks`).
+- **Experiência 100% focada em Matéria Curricular:** pesquisa sem fricção inicial (sem conta obrigatória), resumos automáticos de **½ parágrafo (2 a 3 frases, até ~220 caracteres)** e pré-visualização imediata por **Tema, Disciplina, Classe e Página Exata**.
+- **Separação Estrita Aluno vs. Administrador:**
+  - Interface pública restrita a pesquisa, pré-visualização, pagamento (**17,00 MT** via **M-Pesa** 84/85 ou **e-Mola** 86/87) e área pessoal **Minhas Matérias**.
+  - Painel administrativo isolado em `/admin`, protegido no servidor por `role = 'admin'`, onde o administrador seleciona **Classe**, **Disciplina** e anexa o **PDF** para extração por página e geração automática de resumos de ½ parágrafo via **Groq**.
+- **Autenticação Nativa no CockroachDB (`users`, `user_sessions`, `curricula`, `topics`, `user_unlocks`):**
+  - E-mail e senha com `bcryptjs`, exigidos apenas ao desbloquear uma matéria ou aceder a **Minhas Matérias**.
+  - **Anti-partilha:** máximo de **2 dispositivos ativos simultaneamente** (o 3.º início de sessão encerra automaticamente a sessão mais antiga).
+- **Segurança & Performance 3G/4G:**
+  - A busca (`GET /api/topics`) entrega apenas metadados leves e resumo de ½ parágrafo, tolerante a acentos e erros ortográficos.
+  - O conteúdo completo (`GET /api/curricula/:id/content`) só é entregue após validação de autenticação e desbloqueio em `user_unlocks`, sendo encriptado em **AES-GCM + IndexedDB** para estudo **100% offline**.
 
-## Como executar localmente
+## Variáveis de Ambiente (`.env` e Vercel)
+
+Configure em `.env` (local) e em **Vercel → Project Settings → Environment Variables**:
+
+- `DATABASE_URL` — string de conexão PostgreSQL do CockroachDB
+- `GROQ_API_KEY` — chave da API da Groq para resumos em lote no `/admin`
+- `ADMIN_EMAIL` — e-mail da conta administrativa inicial
+- `ADMIN_PASSWORD` — senha forte da conta administrativa inicial
+
+## Comandos
 
 ```bash
-# 1. Instalar dependências
 npm install
-
-# 2. Configurar variáveis de ambiente
-cp .env.example .env
-# Edite .env com a sua DATABASE_URL do CockroachDB
-
-# 3. Inicializar o esquema no CockroachDB
-npm run db:init
-
-# 4. Iniciar API + Frontend em paralelo
-npm run dev
-```
-
-- Frontend: `http://localhost:5173`
-- API: `http://localhost:3001/api/health`
-
-## Build de produção
-
-```bash
-npm run build
+npm run db:init   # cria tabelas no CockroachDB, conta admin e catálogo base SNE
+npm run dev       # inicia API (porta 3001) + Frontend (porta 5173)
+npm run build     # verificação TypeScript + build de produção
 ```

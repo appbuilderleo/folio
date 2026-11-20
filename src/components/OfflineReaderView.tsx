@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ArrowLeft,
   Bookmark,
@@ -21,16 +21,21 @@ import {
   saveReaderPreferences,
   type ReaderPreferences,
 } from '../lib/offlineStore';
-import type { BookmarkEntry, Manual, ManualChapter, ReaderTheme } from '../types/folio';
+import type {
+  BookmarkEntry,
+  ReaderTheme,
+  UnlockedCurriculum,
+  UnlockedTopic,
+} from '../types/folio';
 
 interface OfflineReaderViewProps {
-  manual: Manual;
-  chapter: ManualChapter;
+  curriculum: UnlockedCurriculum;
+  topic: UnlockedTopic;
   initialPage?: number;
   justUnlocked: boolean;
   bookmarks: BookmarkEntry[];
   onToggleBookmark: (entry: BookmarkEntry) => void;
-  onSelectChapter: (chapter: ManualChapter) => void;
+  onSelectTopic: (topic: UnlockedTopic) => void;
   onBack: () => void;
 }
 
@@ -67,13 +72,13 @@ const THEME_CONFIG: Record<
 };
 
 export function OfflineReaderView({
-  manual,
-  chapter,
+  curriculum,
+  topic,
   initialPage,
   justUnlocked,
   bookmarks,
   onToggleBookmark,
-  onSelectChapter,
+  onSelectTopic,
   onBack,
 }: OfflineReaderViewProps) {
   const [prefs, setPrefs] = useState<ReaderPreferences>(() => loadReaderPreferences());
@@ -81,21 +86,20 @@ export function OfflineReaderView({
   const [showToc, setShowToc] = useState(false);
   const [summaryOpen, setSummaryOpen] = useState(true);
   const [scrollProgress, setScrollProgress] = useState(0);
-  const [syncPercent, setSyncPercent] = useState<number>(justUnlocked ? 12 : 100);
-  const contentRef = useRef<HTMLDivElement>(null);
+  const [syncPercent, setSyncPercent] = useState<number>(justUnlocked ? 16 : 100);
 
   const theme = THEME_CONFIG[prefs.theme];
   const fontSizePx = FONT_SIZES[prefs.fontSizeStep] ?? 18;
 
-  const chapterIndex = manual.chapters.findIndex((c) => c.id === chapter.id);
-  const prevChapter = chapterIndex > 0 ? manual.chapters[chapterIndex - 1] : null;
-  const nextChapter =
-    chapterIndex >= 0 && chapterIndex < manual.chapters.length - 1
-      ? manual.chapters[chapterIndex + 1]
+  const topicIndex = curriculum.topics.findIndex((t) => t.id === topic.id);
+  const prevTopic = topicIndex > 0 ? curriculum.topics[topicIndex - 1] : null;
+  const nextTopic =
+    topicIndex >= 0 && topicIndex < curriculum.topics.length - 1
+      ? curriculum.topics[topicIndex + 1]
       : null;
 
   const isBookmarked = bookmarks.some(
-    (b) => b.manualId === manual.id && b.chapterId === chapter.id
+    (b) => b.curriculumId === curriculum.id && b.topicId === topic.id
   );
 
   const updatePrefs = (patch: Partial<ReaderPreferences>) => {
@@ -106,27 +110,24 @@ export function OfflineReaderView({
     });
   };
 
-  // Background encrypted sync progress simulation right after payment
   useEffect(() => {
     if (!justUnlocked) {
       setSyncPercent(100);
       return;
     }
-    setSyncPercent(14);
-    const steps = [38, 66, 89, 100];
+    setSyncPercent(16);
+    const steps = [44, 74, 92, 100];
     const timers = steps.map((val, idx) =>
-      window.setTimeout(() => setSyncPercent(val), (idx + 1) * 420)
+      window.setTimeout(() => setSyncPercent(val), (idx + 1) * 380)
     );
     return () => timers.forEach((t) => window.clearTimeout(t));
-  }, [justUnlocked, manual.id]);
+  }, [justUnlocked, curriculum.id]);
 
-  // Reset scroll on chapter change
   useEffect(() => {
     window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
     setScrollProgress(0);
-  }, [chapter.id]);
+  }, [topic.id]);
 
-  // Reading scroll progress
   useEffect(() => {
     const onScroll = () => {
       const doc = document.documentElement;
@@ -141,20 +142,19 @@ export function OfflineReaderView({
     return () => window.removeEventListener('scroll', onScroll);
   }, []);
 
-  // Scroll to specific page marker if requested inside a multi-page chapter
   useEffect(() => {
-    if (!initialPage || initialPage === chapter.pageStart) return;
+    if (!initialPage || initialPage === topic.pageNumber) return;
     const el = document.getElementById(`folio-page-${initialPage}`);
     if (el) {
       window.setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
     }
-  }, [initialPage, chapter.id, chapter.pageStart]);
+  }, [initialPage, topic.id, topic.pageNumber]);
 
-  const activePageLabel = initialPage ?? chapter.pageStart;
+  const activePage = initialPage ?? topic.pageNumber;
 
   return (
     <div className={`min-h-dvh flex flex-col transition-colors duration-200 ${theme.rootClass}`}>
-      {/* Top Reading Progress Hairline */}
+      {/* Reading Progress Hairline */}
       <div className="fixed top-0 inset-x-0 z-50 h-[3px] bg-transparent pointer-events-none">
         <div
           className="h-full bg-amber transition-[width] duration-150"
@@ -162,7 +162,7 @@ export function OfflineReaderView({
         />
       </div>
 
-      {/* Background Encrypted Sync Banner (appears smoothly right after unlock) */}
+      {/* Encrypted Offline Sync Progress Bar */}
       {syncPercent < 100 && (
         <div
           role="status"
@@ -172,7 +172,7 @@ export function OfflineReaderView({
           <div className="max-w-2xl mx-auto flex items-center justify-between gap-3">
             <span className="inline-flex items-center gap-1.5">
               <Lock className="w-3.5 h-3.5 text-amber" aria-hidden="true" />
-              <span>A encriptar e guardar manual no cofre offline…</span>
+              <span>A encriptar matéria para estudo 100% offline…</span>
             </span>
             <span className="tabular-nums font-bold text-amber">{syncPercent}%</span>
           </div>
@@ -185,7 +185,7 @@ export function OfflineReaderView({
         </div>
       )}
 
-      {/* Reader Top Bar */}
+      {/* Top Bar */}
       <header
         className={`sticky top-0 z-30 backdrop-blur-md border-b transition-colors ${theme.headerBg} ${theme.border}`}
       >
@@ -201,11 +201,12 @@ export function OfflineReaderView({
           </button>
 
           <div className="min-w-0 text-center flex-1 px-1">
-            <p className="text-[12.5px] font-bold truncate">{manual.title}</p>
+            <p className="text-[12.5px] font-bold truncate">
+              {curriculum.subject} · {curriculum.grade}
+            </p>
             <p className={`text-[11px] font-semibold tabular-nums ${theme.muted}`}>
-              Pág. {activePageLabel}
-              {chapter.pageEnd > chapter.pageStart ? `–${chapter.pageEnd}` : ''} ·{' '}
-              {manual.subject}
+              Pág. {activePage}
+              {topic.pageEnd > topic.pageNumber ? `–${topic.pageEnd}` : ''}
             </p>
           </div>
 
@@ -214,20 +215,21 @@ export function OfflineReaderView({
               type="button"
               onClick={() =>
                 onToggleBookmark({
-                  manualId: manual.id,
-                  chapterId: chapter.id,
-                  pageNumber: activePageLabel,
+                  curriculumId: curriculum.id,
+                  topicId: topic.id,
+                  subject: curriculum.subject,
+                  grade: curriculum.grade,
+                  topicTitle: topic.title,
+                  pageNumber: activePage,
                   savedAt: new Date().toISOString(),
                 })
               }
-              aria-label={isBookmarked ? 'Remover marcador de página' : 'Marcar esta página'}
+              aria-label={isBookmarked ? 'Remover marcador' : 'Marcar esta página'}
               aria-pressed={isBookmarked}
               className="w-11 h-11 rounded-xl flex items-center justify-center hover:opacity-80 cursor-pointer"
             >
               <Bookmark
-                className={`w-[19px] h-[19px] ${
-                  isBookmarked ? 'text-amber fill-amber' : ''
-                }`}
+                className={`w-[19px] h-[19px] ${isBookmarked ? 'text-amber fill-amber' : ''}`}
                 aria-hidden="true"
               />
             </button>
@@ -251,7 +253,7 @@ export function OfflineReaderView({
                 setShowToc((v) => !v);
                 setShowSettings(false);
               }}
-              aria-label="Índice de capítulos"
+              aria-label="Índice de temas"
               aria-expanded={showToc}
               className="w-11 h-11 rounded-xl flex items-center justify-center hover:opacity-80 cursor-pointer"
             >
@@ -260,11 +262,10 @@ export function OfflineReaderView({
           </div>
         </div>
 
-        {/* Adaptive Reader Settings Popover (Theme: Papel, Sépia, Noite + Font A- / A+) */}
+        {/* Theme & Font Controls */}
         {showSettings && (
           <div className={`border-t px-4 py-4 ${theme.cardBg} ${theme.border}`}>
             <div className="max-w-2xl mx-auto flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-              {/* Theme Switcher */}
               <div>
                 <span className={`block text-[11px] font-bold uppercase tracking-[0.1em] mb-2 ${theme.muted}`}>
                   Modo de leitura
@@ -272,9 +273,9 @@ export function OfflineReaderView({
                 <div className="flex items-center gap-2">
                   {(
                     [
-                      { id: 'paper', label: 'Papel', swatch: '#f3ebd6', ring: '#083b27' },
-                      { id: 'sepia', label: 'Sépia', swatch: '#ebe0c5', ring: '#8a6b3e' },
-                      { id: 'night', label: 'Noite', swatch: '#041a11', ring: '#ea9222' },
+                      { id: 'paper', label: 'Papel', swatch: '#f3ebd6' },
+                      { id: 'sepia', label: 'Sépia', swatch: '#ebe0c5' },
+                      { id: 'night', label: 'Noite', swatch: '#041a11' },
                     ] as const
                   ).map((item) => {
                     const active = prefs.theme === item.id;
@@ -302,7 +303,6 @@ export function OfflineReaderView({
                 </div>
               </div>
 
-              {/* Font Size A- / A+ */}
               <div>
                 <span className={`block text-[11px] font-bold uppercase tracking-[0.1em] mb-2 ${theme.muted}`}>
                   Tamanho da letra ({fontSizePx}px)
@@ -314,7 +314,7 @@ export function OfflineReaderView({
                       updatePrefs({ fontSizeStep: Math.max(0, prefs.fontSizeStep - 1) })
                     }
                     disabled={prefs.fontSizeStep === 0}
-                    aria-label="Diminuir tamanho da letra"
+                    aria-label="Diminuir letra"
                     className={`min-h-[40px] min-w-[52px] px-3 rounded-xl border font-bold text-[14px] inline-flex items-center justify-center gap-1 cursor-pointer disabled:opacity-40 ${theme.border}`}
                   >
                     <Minus className="w-3.5 h-3.5" aria-hidden="true" />
@@ -328,7 +328,7 @@ export function OfflineReaderView({
                       })
                     }
                     disabled={prefs.fontSizeStep === FONT_SIZES.length - 1}
-                    aria-label="Aumentar tamanho da letra"
+                    aria-label="Aumentar letra"
                     className={`min-h-[40px] min-w-[52px] px-3 rounded-xl border font-bold text-[15px] inline-flex items-center justify-center gap-1 cursor-pointer disabled:opacity-40 ${theme.border}`}
                   >
                     <Plus className="w-3.5 h-3.5" aria-hidden="true" />
@@ -341,36 +341,27 @@ export function OfflineReaderView({
         )}
       </header>
 
-      {/* Main Didactic Content */}
-      <main
-        id="main"
-        tabIndex={-1}
-        ref={contentRef}
-        className="w-full max-w-[660px] mx-auto px-5 sm:px-6 pt-7 pb-16 flex-1"
-      >
-        {/* Offline Encrypted Trust Seal */}
+      {/* Main Didactic Reading Body */}
+      <main id="main" tabIndex={-1} className="w-full max-w-[660px] mx-auto px-5 sm:px-6 pt-7 pb-16 flex-1">
         <div className="flex flex-wrap items-center justify-between gap-2 mb-5">
           <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.11em] text-amber">
             <ShieldCheck className="w-3.5 h-3.5" aria-hidden="true" />
-            <span>Leitura 100% Offline • Encriptado</span>
+            <span>Estudo 100% Offline • Protegido</span>
           </span>
           <span className={`text-[12px] font-semibold tabular-nums ${theme.muted}`}>
-            {chapter.readingMinutes} min de estudo
+            {topic.readingMinutes} min de estudo
           </span>
         </div>
 
-        {/* Chapter Title */}
         <p className={`text-[11px] font-bold uppercase tracking-[0.1em] ${theme.muted}`}>
-          {chapter.unitLabel || `${manual.subject} · ${manual.grade}`}
+          {topic.unitLabel || `${curriculum.subject} · ${curriculum.grade}`}
         </p>
         <h1 className="mt-2 text-[26px] sm:text-[31px] font-extrabold tracking-[-0.03em] leading-[1.12]">
-          {chapter.title}
+          {topic.title}
         </h1>
 
-        {/* Collapsible Didactic Study Summary & Key Takeaways */}
-        <section
-          className={`mt-6 rounded-2xl border overflow-hidden ${theme.cardBg} ${theme.border}`}
-        >
+        {/* Collapsible Study Summary */}
+        <section className={`mt-6 rounded-2xl border overflow-hidden ${theme.cardBg} ${theme.border}`}>
           <button
             type="button"
             onClick={() => setSummaryOpen((v) => !v)}
@@ -379,11 +370,7 @@ export function OfflineReaderView({
           >
             <span className="inline-flex items-center gap-2 text-[12px] font-bold uppercase tracking-[0.09em]">
               <Sparkles className="w-4 h-4 text-amber" aria-hidden="true" />
-              <span>
-                {chapter.summarySource === 'groq'
-                  ? 'Resumo de Revisão · IA Groq'
-                  : 'Resumo de Revisão Rápida'}
-              </span>
+              <span>Resumo de Revisão Rápida</span>
             </span>
             {summaryOpen ? (
               <ChevronUp className="w-4 h-4 opacity-70" aria-hidden="true" />
@@ -394,10 +381,12 @@ export function OfflineReaderView({
 
           {summaryOpen && (
             <div className={`px-4 sm:px-5 pb-4 pt-1 border-t ${theme.border}`}>
-              <p className="mt-2.5 text-[14.5px] leading-[1.6] opacity-90">{chapter.summary}</p>
-              {chapter.keyTakeaways.length > 0 && (
+              <p className="mt-2.5 text-[14.5px] leading-[1.6] opacity-90">
+                {topic.summaryHalfParagraph}
+              </p>
+              {topic.keyTakeaways.length > 0 && (
                 <ul className="mt-3.5 space-y-2">
-                  {chapter.keyTakeaways.map((point, idx) => (
+                  {topic.keyTakeaways.map((point, idx) => (
                     <li key={idx} className="flex items-start gap-2 text-[13.5px] leading-snug">
                       <Check className="w-4 h-4 text-amber mt-0.5 shrink-0" aria-hidden="true" />
                       <span>{point}</span>
@@ -405,29 +394,17 @@ export function OfflineReaderView({
                   ))}
                 </ul>
               )}
-              {chapter.keywords.length > 0 && (
-                <div className="mt-3.5 flex flex-wrap gap-1.5">
-                  {chapter.keywords.slice(0, 6).map((kw) => (
-                    <span
-                      key={kw}
-                      className={`px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${theme.border} ${theme.muted}`}
-                    >
-                      #{kw}
-                    </span>
-                  ))}
-                </div>
-              )}
             </div>
           )}
         </section>
 
-        {/* Full Editorial Didactic Prose */}
+        {/* Full Editorial Prose */}
         <article
-          className="mt-8 font-editorial reader-prose space-y-5 max-w-[60ch]"
+          className="mt-8 font-editorial reader-prose space-y-5 max-w-[60ch] select-none"
           style={{ fontSize: `${fontSizePx}px`, lineHeight: prefs.theme === 'night' ? 1.78 : 1.72 }}
         >
-          {chapter.pages && chapter.pages.length > 0
-            ? chapter.pages.map((pg, idx) => (
+          {topic.pages && topic.pages.length > 0
+            ? topic.pages.map((pg, idx) => (
                 <div key={pg.pageNumber} id={`folio-page-${pg.pageNumber}`} className="scroll-mt-20">
                   <div
                     className={`flex items-center gap-3 my-6 first:mt-0 text-[11px] font-sans font-bold uppercase tracking-[0.14em] ${theme.muted}`}
@@ -443,56 +420,56 @@ export function OfflineReaderView({
                   </div>
                 </div>
               ))
-            : chapter.paragraphs.map((p, idx) => <p key={idx}>{p}</p>)}
+            : topic.paragraphs.map((p, idx) => <p key={idx}>{p}</p>)}
         </article>
 
-        {/* Chapter Navigation */}
+        {/* Topic Navigation */}
         <nav
-          aria-label="Navegação entre capítulos"
+          aria-label="Navegação entre temas"
           className={`mt-12 pt-6 border-t grid grid-cols-1 sm:grid-cols-2 gap-3 ${theme.border}`}
         >
-          {prevChapter ? (
+          {prevTopic ? (
             <button
               type="button"
-              onClick={() => onSelectChapter(prevChapter)}
+              onClick={() => onSelectTopic(prevTopic)}
               className={`p-4 rounded-2xl border text-left transition-opacity hover:opacity-85 cursor-pointer ${theme.cardBg} ${theme.border}`}
             >
               <span className={`inline-flex items-center gap-1 text-[11px] font-bold uppercase tracking-[0.08em] ${theme.muted}`}>
                 <ChevronLeft className="w-3.5 h-3.5" aria-hidden="true" />
-                Anterior · Pág. {prevChapter.pageStart}
+                Anterior · Pág. {prevTopic.pageNumber}
               </span>
               <span className="block mt-1 text-[14px] font-bold line-clamp-2">
-                {prevChapter.title}
+                {prevTopic.title}
               </span>
             </button>
           ) : (
             <div />
           )}
 
-          {nextChapter && (
+          {nextTopic && (
             <button
               type="button"
-              onClick={() => onSelectChapter(nextChapter)}
+              onClick={() => onSelectTopic(nextTopic)}
               className={`p-4 rounded-2xl border text-left sm:text-right transition-opacity hover:opacity-85 cursor-pointer ${theme.cardBg} ${theme.border}`}
             >
               <span className={`inline-flex items-center sm:justify-end gap-1 text-[11px] font-bold uppercase tracking-[0.08em] ${theme.muted}`}>
-                Seguinte · Pág. {nextChapter.pageStart}
+                Seguinte · Pág. {nextTopic.pageNumber}
                 <ChevronRight className="w-3.5 h-3.5" aria-hidden="true" />
               </span>
               <span className="block mt-1 text-[14px] font-bold line-clamp-2">
-                {nextChapter.title}
+                {nextTopic.title}
               </span>
             </button>
           )}
         </nav>
       </main>
 
-      {/* Chapter Index / Table of Contents Drawer */}
+      {/* Topic Index Drawer */}
       {showToc && (
         <div
           role="dialog"
           aria-modal="true"
-          aria-label="Índice do manual"
+          aria-label="Índice da matéria"
           className="fixed inset-0 z-50 flex justify-end bg-ink/50 backdrop-blur-[2px]"
           onClick={(e) => {
             if (e.target === e.currentTarget) setShowToc(false);
@@ -504,9 +481,9 @@ export function OfflineReaderView({
             <div className="flex items-center justify-between gap-2 pb-4 border-b border-current/10">
               <div>
                 <p className={`text-[11px] font-bold uppercase tracking-[0.1em] ${theme.muted}`}>
-                  Índice do Manual
+                  Temas de {curriculum.grade}
                 </p>
-                <h2 className="text-[16px] font-extrabold mt-0.5">{manual.title}</h2>
+                <h2 className="text-[17px] font-extrabold mt-0.5">{curriculum.subject}</h2>
               </div>
               <button
                 type="button"
@@ -519,14 +496,14 @@ export function OfflineReaderView({
             </div>
 
             <ul className="mt-4 space-y-2 flex-1">
-              {manual.chapters.map((ch, idx) => {
-                const active = ch.id === chapter.id;
+              {curriculum.topics.map((t, idx) => {
+                const active = t.id === topic.id;
                 return (
-                  <li key={ch.id}>
+                  <li key={t.id}>
                     <button
                       type="button"
                       onClick={() => {
-                        onSelectChapter(ch);
+                        onSelectTopic(t);
                         setShowToc(false);
                       }}
                       className={`w-full text-left p-3.5 rounded-xl border transition-all cursor-pointer ${
@@ -536,10 +513,10 @@ export function OfflineReaderView({
                       }`}
                     >
                       <div className="flex items-center justify-between gap-2 text-[11px] font-bold uppercase tracking-[0.06em] opacity-75">
-                        <span>Capítulo {idx + 1}</span>
-                        <span className="tabular-nums">Pág. {ch.pageStart}</span>
+                        <span>Tema {idx + 1}</span>
+                        <span className="tabular-nums">Pág. {t.pageNumber}</span>
                       </div>
-                      <p className="mt-1 text-[14px] leading-snug">{ch.title}</p>
+                      <p className="mt-1 text-[14px] leading-snug">{t.title}</p>
                     </button>
                   </li>
                 );

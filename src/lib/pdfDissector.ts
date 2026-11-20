@@ -1,6 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
-import type { DissectionProgress, Manual, ManualChapter, ManualPage, SchoolCycle } from '../types/folio';
+import type { AdminTopicDraft, DissectionProgress, TopicPage } from '../types/folio';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -19,57 +19,57 @@ interface ExtractedPage {
   rawText: string;
 }
 
-export interface PdfQuickInspect {
-  suggestedTitle: string;
+export interface AdminPdfInspect {
   suggestedSubject: string;
   suggestedGradeNumber: number;
   totalPages: number;
   fileName: string;
   fileSizeBytes: number;
-  sampleText: string;
 }
 
-export interface DissectOptions {
-  title: string;
-  subject: string;
-  gradeNumber: number;
-  publisher?: string;
-  defaultUnlocked: boolean;
-  priceMt?: number;
-  onProgress?: (progress: DissectionProgress) => void;
-}
-
-export interface DissectResult {
-  manual: Manual;
+export interface AdminDissectResult {
+  topics: AdminTopicDraft[];
   stats: {
     totalPages: number;
     textPages: number;
     scannedPages: number;
-    chaptersCount: number;
+    topicsCount: number;
     totalWords: number;
-    keywordsCount: number;
   };
 }
+
+export const AVAILABLE_SUBJECTS = [
+  'Biologia',
+  'Matemática',
+  'Português',
+  'História',
+  'Física',
+  'Química',
+  'Geografia',
+  'Ciências Naturais',
+  'Filosofia',
+  'Inglês',
+  'Educação Moral e Cívica',
+  'Noções de Empreendedorismo',
+  'TICs',
+];
 
 const PT_STOPWORDS = new Set([
   'a', 'o', 'os', 'as', 'um', 'uma', 'uns', 'umas', 'de', 'do', 'da', 'dos', 'das',
   'em', 'no', 'na', 'nos', 'nas', 'por', 'pelo', 'pela', 'pelos', 'pelas', 'para',
   'com', 'sem', 'sob', 'sobre', 'entre', 'ate', 'até', 'apos', 'após', 'ante', 'contra',
   'desde', 'que', 'quem', 'qual', 'quais', 'cujo', 'cuja', 'onde', 'quando', 'como',
-  'porque', 'pois', 'mas', 'porem', 'porém', 'contudo', 'todavia', 'entretanto', 'ou',
-  'nem', 'se', 'caso', 'embora', 'conforme', 'segundo', 'e', 'é', 'sao', 'são', 'foi',
-  'foram', 'era', 'eram', 'ser', 'estar', 'esta', 'está', 'estao', 'estão', 'ter', 'tem',
-  'têm', 'tinha', 'pode', 'podem', 'fazer', 'faz', 'mais', 'menos', 'muito', 'muita',
-  'muitos', 'muitas', 'pouco', 'todo', 'toda', 'todos', 'todas', 'outro', 'outra',
-  'outros', 'outras', 'mesmo', 'mesma', 'este', 'esta', 'estes', 'estas', 'esse', 'essa',
-  'esses', 'essas', 'aquele', 'aquela', 'isto', 'isso', 'aquilo', 'seu', 'sua', 'seus',
-  'suas', 'meu', 'minha', 'nosso', 'nossa', 'ele', 'ela', 'eles', 'elas', 'nos', 'nós',
-  'voce', 'você', 'nao', 'não', 'sim', 'ja', 'já', 'tambem', 'também', 'ainda', 'so', 'só',
-  'apenas', 'bem', 'mal', 'cada', 'assim', 'entao', 'então', 'logo', 'aqui', 'ali', 'la',
-  'lá', 'num', 'numa', 'ao', 'aos', 'à', 'às', 'pelo', 'pela', 'página', 'pagina',
-  'capitulo', 'capítulo', 'unidade', 'manual', 'classe', 'livro', 'texto', 'figura',
-  'tabela', 'exemplo', 'exercicio', 'exercício', 'atividades', 'actividades', 'the', 'and',
-  'of', 'to', 'in', 'is', 'for', 'with', 'that', 'this', 'from', 'are', 'be',
+  'porque', 'pois', 'mas', 'porem', 'porém', 'contudo', 'ou', 'nem', 'se', 'caso',
+  'embora', 'conforme', 'segundo', 'e', 'é', 'sao', 'são', 'foi', 'foram', 'era', 'eram',
+  'ser', 'estar', 'esta', 'está', 'estao', 'estão', 'ter', 'tem', 'têm', 'pode', 'podem',
+  'fazer', 'faz', 'mais', 'menos', 'muito', 'muita', 'muitos', 'muitas', 'pouco', 'todo',
+  'toda', 'todos', 'todas', 'outro', 'outra', 'mesmo', 'mesma', 'este', 'esta', 'estes',
+  'estas', 'esse', 'essa', 'aquele', 'aquela', 'isto', 'isso', 'aquilo', 'seu', 'sua',
+  'seus', 'suas', 'meu', 'minha', 'nosso', 'nossa', 'ele', 'ela', 'eles', 'elas', 'nos',
+  'nós', 'nao', 'não', 'sim', 'ja', 'já', 'tambem', 'também', 'ainda', 'so', 'só',
+  'apenas', 'bem', 'cada', 'assim', 'entao', 'então', 'logo', 'aqui', 'num', 'numa',
+  'ao', 'aos', 'à', 'às', 'página', 'pagina', 'capitulo', 'capítulo', 'unidade', 'classe',
+  'texto', 'figura', 'tabela', 'exemplo', 'exercicio', 'exercício', 'atividades', 'actividades',
 ]);
 
 const SUBJECT_PATTERNS: Array<{ subject: string; nameRegex: RegExp; regex: RegExp }> = [
@@ -125,76 +125,36 @@ const SUBJECT_PATTERNS: Array<{ subject: string; nameRegex: RegExp; regex: RegEx
   },
 ];
 
-export const AVAILABLE_SUBJECTS = [
-  'Biologia',
-  'Matemática',
-  'Português',
-  'História',
-  'Física',
-  'Química',
-  'Geografia',
-  'Ciências Naturais',
-  'Filosofia',
-  'Inglês',
-  'Educação Moral e Cívica',
-  'Outro',
-];
-
-export function gradeToCycle(gradeNumber: number): Exclude<SchoolCycle, 'all'> {
-  if (gradeNumber <= 6) return '1-6';
-  if (gradeNumber <= 9) return '7-9';
-  return '10-12';
-}
-
 export function formatGrade(gradeNumber: number): string {
   const clamped = Math.max(1, Math.min(12, Math.round(gradeNumber)));
   return `${clamped}.ª Classe`;
 }
 
 function normalizeForMatch(text: string): string {
-  return text
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase();
-}
-
-function cleanFileNameToTitle(fileName: string): string {
-  return fileName
-    .replace(/\.pdf$/i, '')
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
+  return text.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
 function detectGrade(text: string): number {
   const match = text.match(/\b(1[0-2]|[1-9])\s*(?:ª|a|\.ª|\.a)?\s*classe\b/i);
-  if (match) {
-    return parseInt(match[1], 10);
-  }
+  if (match) return parseInt(match[1], 10);
   const alt = text.match(/\bclasse\s*(1[0-2]|[1-9])\b/i);
-  if (alt) {
-    return parseInt(alt[1], 10);
-  }
+  if (alt) return parseInt(alt[1], 10);
   return 10;
 }
 
-function detectSubject(titleAndFile: string, bodySample: string): string {
-  let bestSubject = 'Outro';
+function detectSubject(fileName: string, bodySample: string): string {
+  let bestSubject = 'Biologia';
   let bestScore = 0;
-
   for (const item of SUBJECT_PATTERNS) {
     let score = 0;
-    if (item.nameRegex.test(titleAndFile)) score += 12;
-    const titleHits = titleAndFile.match(item.regex)?.length ?? 0;
-    const bodyHits = bodySample.match(item.regex)?.length ?? 0;
-    score += titleHits * 4 + bodyHits;
-
+    if (item.nameRegex.test(fileName)) score += 12;
+    score += (fileName.match(item.regex)?.length ?? 0) * 4;
+    score += bodySample.match(item.regex)?.length ?? 0;
     if (score > bestScore) {
       bestScore = score;
       bestSubject = item.subject;
     }
   }
-
   return bestSubject;
 }
 
@@ -204,32 +164,21 @@ async function extractPageLines(
 ): Promise<RawTextLine[]> {
   const page = await pdfDoc.getPage(pageNumber);
   const textContent = await page.getTextContent();
-
-  interface TextFragment {
-    str: string;
-    x: number;
-    y: number;
-    fontSize: number;
-  }
-
-  const fragments: TextFragment[] = [];
+  const fragments: Array<{ str: string; x: number; y: number; fontSize: number }> = [];
 
   for (const rawItem of textContent.items) {
     if (!('str' in rawItem)) continue;
-    const str = rawItem.str;
-    if (!str || !str.trim()) continue;
+    if (!rawItem.str || !rawItem.str.trim()) continue;
     const tx = rawItem.transform;
     const x = tx[4] ?? 0;
     const y = tx[5] ?? 0;
     const scaleX = Math.hypot(tx[0] ?? 0, tx[1] ?? 0);
     const scaleY = Math.hypot(tx[2] ?? 0, tx[3] ?? 0);
     const fontSize = Math.max(scaleX, scaleY, rawItem.height || 10);
-    fragments.push({ str, x, y, fontSize });
+    fragments.push({ str: rawItem.str, x, y, fontSize });
   }
 
   if (fragments.length === 0) return [];
-
-  // Sort top-to-bottom (descending y in PDF coordinate space), then left-to-right
   fragments.sort((a, b) => {
     const dy = b.y - a.y;
     if (Math.abs(dy) > 3.2) return dy;
@@ -237,79 +186,52 @@ async function extractPageLines(
   });
 
   const lines: RawTextLine[] = [];
-  let currentGroup: TextFragment[] = [fragments[0]];
+  let group = [fragments[0]];
   let currentY = fragments[0].y;
+
+  const mergeGroup = (g: typeof fragments): RawTextLine => {
+    g.sort((a, b) => a.x - b.x);
+    let text = '';
+    let maxFont = 0;
+    for (let i = 0; i < g.length; i++) {
+      const it = g[i];
+      maxFont = Math.max(maxFont, it.fontSize);
+      const piece = it.str.replace(/\s+/g, ' ');
+      if (i === 0) {
+        text = piece.trimStart();
+      } else {
+        const prev = g[i - 1];
+        const needsSpace =
+          !text.endsWith(' ') &&
+          !text.endsWith('-') &&
+          !piece.startsWith(' ') &&
+          !/^[.,;:!?)\]]/.test(piece) &&
+          it.x - prev.x > 1.5;
+        text += (needsSpace ? ' ' : '') + piece;
+      }
+    }
+    return { text: text.replace(/\s+/g, ' ').trim(), y: g[0].y, fontSize: maxFont, pageNumber };
+  };
 
   for (let i = 1; i < fragments.length; i++) {
     const f = fragments[i];
-    const tolerance = Math.max(3.5, currentGroup[0].fontSize * 0.45);
-    if (Math.abs(f.y - currentY) <= tolerance) {
-      currentGroup.push(f);
+    const tol = Math.max(3.5, group[0].fontSize * 0.45);
+    if (Math.abs(f.y - currentY) <= tol) {
+      group.push(f);
     } else {
-      lines.push(mergeFragmentsToLine(currentGroup, pageNumber));
-      currentGroup = [f];
+      lines.push(mergeGroup(group));
+      group = [f];
       currentY = f.y;
     }
   }
-  if (currentGroup.length > 0) {
-    lines.push(mergeFragmentsToLine(currentGroup, pageNumber));
-  }
-
+  lines.push(mergeGroup(group));
   return lines.filter((l) => l.text.length > 0);
 }
 
-function mergeFragmentsToLine(
-  group: Array<{ str: string; x: number; y: number; fontSize: number }>,
-  pageNumber: number
-): RawTextLine {
-  group.sort((a, b) => a.x - b.x);
-  let text = '';
-  let maxFont = 0;
-
-  for (let i = 0; i < group.length; i++) {
-    const item = group[i];
-    maxFont = Math.max(maxFont, item.fontSize);
-    const piece = item.str.replace(/\s+/g, ' ');
-    if (i === 0) {
-      text = piece.trimStart();
-    } else {
-      const prev = group[i - 1];
-      const needsSpace =
-        !text.endsWith(' ') &&
-        !text.endsWith('-') &&
-        !piece.startsWith(' ') &&
-        !/^[.,;:!?)\]]/.test(piece) &&
-        item.x - prev.x > 1.5;
-      text += (needsSpace ? ' ' : '') + piece;
-    }
-  }
-
-  return {
-    text: text.replace(/\s+/g, ' ').trim(),
-    y: group[0].y,
-    fontSize: maxFont,
-    pageNumber,
-  };
-}
-
-/**
- * Quick pre-scan (first 3 pages + PDF metadata) to auto-fill the Upload Form cleanly.
- */
-export async function inspectPdfFile(file: File): Promise<PdfQuickInspect> {
+export async function inspectAdminPdf(file: File): Promise<AdminPdfInspect> {
   const buffer = await file.arrayBuffer();
   const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
   const pdfDoc = await loadingTask.promise;
-
-  let metaTitle = '';
-  try {
-    const meta = await pdfDoc.getMetadata();
-    const info = meta?.info as Record<string, unknown> | undefined;
-    if (info && typeof info.Title === 'string' && info.Title.trim().length > 3) {
-      metaTitle = info.Title.trim();
-    }
-  } catch {
-    // ignore missing metadata
-  }
 
   const samplePages = Math.min(3, pdfDoc.numPages);
   let sampleText = '';
@@ -318,56 +240,43 @@ export async function inspectPdfFile(file: File): Promise<PdfQuickInspect> {
     sampleText += lines.map((l) => l.text).join(' ') + '\n';
   }
 
-  const titleContext = `${file.name} ${metaTitle}`;
-  const combinedForDetection = `${titleContext} ${sampleText.slice(0, 2200)}`;
-  const suggestedSubject = detectSubject(titleContext, sampleText.slice(0, 2200));
-  const suggestedGradeNumber = detectGrade(combinedForDetection);
-  const cleanFileTitle = cleanFileNameToTitle(file.name);
-  const suggestedTitle =
-    metaTitle && !/microsoft word|untitled|document/i.test(metaTitle)
-      ? metaTitle
-      : cleanFileTitle || `${suggestedSubject} — ${formatGrade(suggestedGradeNumber)}`;
+  const suggestedSubject = detectSubject(file.name, sampleText.slice(0, 2200));
+  const suggestedGradeNumber = detectGrade(`${file.name} ${sampleText.slice(0, 2200)}`);
+  const totalPages = pdfDoc.numPages;
 
   await loadingTask.destroy();
 
   return {
-    suggestedTitle,
     suggestedSubject,
     suggestedGradeNumber,
-    totalPages: pdfDoc.numPages,
+    totalPages,
     fileName: file.name,
     fileSizeBytes: file.size,
-    sampleText: sampleText.slice(0, 600),
   };
 }
 
 function isHeadingCandidate(line: RawTextLine, bodyFontSize: number): boolean {
   const t = line.text.trim();
   if (t.length < 4 || t.length > 125) return false;
-  if (/^\d+$/.test(t)) return false; // pure page number
-  if (/^(página|pagina|pág\.?)\s*\d+$/i.test(t)) return false;
+  if (/^\d+$/.test(t) || /^(página|pagina|pág\.?)\s*\d+$/i.test(t)) return false;
 
-  // Explicit curriculum structural markers
   if (
-    /^(unidade(\s+temática|\s+didática)?|capítulo|capitulo|tema|lição|licao|módulo|modulo|parte|secção|seccao)\s+([ivxlcdm]+|\d+)/i.test(
+    /^(unidade(\s+temática|\s+didática)?|capítulo|capitulo|tema|lição|licao|parte|secção|seccao)\s+([ivxlcdm]+|\d+)/i.test(
       t
     )
   ) {
     return true;
   }
 
-  // Numbered heading with larger font or clean title casing
   if (/^\d+(\.\d+)?\.?\s+[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ]/.test(t) && t.length <= 95 && !/[.!?]$/.test(t)) {
     if (line.fontSize >= bodyFontSize * 1.06) return true;
   }
 
-  // Significantly larger font than body copy
   if (line.fontSize >= bodyFontSize * 1.24 && t.length <= 105 && !/[.,;]$/.test(t)) {
-    const wordCount = t.split(/\s+/).length;
-    if (wordCount >= 1 && wordCount <= 14) return true;
+    const words = t.split(/\s+/).length;
+    if (words >= 1 && words <= 14) return true;
   }
 
-  // All-caps medium-length section titles
   if (
     t.length >= 6 &&
     t.length <= 72 &&
@@ -384,12 +293,11 @@ function isHeadingCandidate(line: RawTextLine, bodyFontSize: number): boolean {
 
 function cleanHeadingTitle(raw: string): string {
   let t = raw.replace(/\s+/g, ' ').trim();
-  // Convert screaming ALL CAPS to readable Title/Sentence case
   const letters = t.replace(/[^A-Za-zÁÀÂÃÉÊÍÓÔÕÚÇáàâãéêíóôõúç]/g, '');
   if (letters.length > 5 && letters === letters.toUpperCase()) {
     t = t
       .toLowerCase()
-      .replace(/(^|\s|[-–—/])([a-záàâãéêíóôõúç])/g, (_, sep, ch) => sep + ch.toUpperCase())
+      .replace(/(^|\s|[-/])([a-záàâãéêíóôõúç])/g, (_, sep, ch) => sep + ch.toUpperCase())
       .replace(/\b(De|Da|Do|Das|Dos|Em|Na|No|Nas|Nos|E|A|O|As|Os|Para|Com|Por|Sobre|Entre|Um|Uma)\b/g, (m) =>
         m.toLowerCase()
       );
@@ -405,27 +313,18 @@ function buildParagraphsFromLines(
 ): { paragraphs: string[]; headings: string[] } {
   const paragraphs: string[] = [];
   const headings: string[] = [];
-
   let buffer = '';
   let prevLine: RawTextLine | null = null;
 
   const flush = () => {
-    const cleaned = buffer
-      .replace(/\s+/g, ' ')
-      .replace(/\s+([.,;:!?])/g, '$1')
-      .trim();
-    if (cleaned.length >= 20) {
-      paragraphs.push(cleaned);
-    }
+    const cleaned = buffer.replace(/\s+/g, ' ').replace(/\s+([.,;:!?])/g, '$1').trim();
+    if (cleaned.length >= 20) paragraphs.push(cleaned);
     buffer = '';
   };
 
   for (const line of lines) {
     const trimmed = line.text.trim();
-    if (!trimmed) continue;
-
-    // Strip isolated page numbers & repeated running headers/footers
-    if (/^\d{1,4}$/.test(trimmed)) continue;
+    if (!trimmed || /^\d{1,4}$/.test(trimmed)) continue;
     if (repeatedEdgeLines.has(normalizeForMatch(trimmed))) continue;
 
     if (isHeadingCandidate(line, bodyFontSize)) {
@@ -436,22 +335,20 @@ function buildParagraphsFromLines(
     }
 
     const lineGap = prevLine ? Math.abs(prevLine.y - line.y) : 0;
-    const expectedLineStep = Math.max(12, bodyFontSize * 1.42);
-    const isBullet = /^[•▪▸◦–—\-*]\s+/.test(trimmed) || /^[a-z]\)\s+/i.test(trimmed);
-    const prevEndedSentence = /[.!?:»"]$/.test(buffer.trim());
+    const expectedStep = Math.max(12, bodyFontSize * 1.42);
+    const isBullet = /^[•▪▸◦\-*]\s+/.test(trimmed) || /^[a-z]\)\s+/i.test(trimmed);
+    const prevEnded = /[.!?:»"]$/.test(buffer.trim());
 
-    const startsNewParagraph =
+    if (
       buffer.length > 0 &&
       (isBullet ||
-        lineGap > expectedLineStep * 1.38 ||
-        (buffer.length > 380 && prevEndedSentence && lineGap > expectedLineStep * 1.08));
-
-    if (startsNewParagraph) {
+        lineGap > expectedStep * 1.38 ||
+        (buffer.length > 380 && prevEnded && lineGap > expectedStep * 1.08))
+    ) {
       flush();
     }
 
     if (buffer.endsWith('-') && /^[a-záàâãéêíóôõúç]/.test(trimmed)) {
-      // Rejoin hyphenated Portuguese word split across lines
       buffer = buffer.slice(0, -1) + trimmed;
     } else if (buffer.length > 0) {
       buffer += ' ' + trimmed;
@@ -468,6 +365,7 @@ function buildParagraphsFromLines(
 
 function extractKeywords(text: string, limit = 7): string[] {
   const freq = new Map<string, number>();
+  const surface = new Map<string, string>();
   const words = text.match(/[A-Za-zÁÀÂÃÉÊÍÓÔÕÚÇáàâãéêíóôõúç][A-Za-zÁÀÂÃÉÊÍÓÔÕÚÇáàâãéêíóôõúç-]{3,}/g) || [];
 
   for (const raw of words) {
@@ -475,16 +373,7 @@ function extractKeywords(text: string, limit = 7): string[] {
     const norm = normalizeForMatch(clean);
     if (norm.length < 4 || PT_STOPWORDS.has(norm)) continue;
     freq.set(norm, (freq.get(norm) ?? 0) + 1);
-  }
-
-  // Keep best surface capitalization seen for each normalized term
-  const surface = new Map<string, string>();
-  for (const raw of words) {
-    const clean = raw.replace(/^-|-$/g, '');
-    const norm = normalizeForMatch(clean);
-    if (!surface.has(norm)) {
-      surface.set(norm, clean.toLowerCase());
-    }
+    if (!surface.has(norm)) surface.set(norm, clean.toLowerCase());
   }
 
   return Array.from(freq.entries())
@@ -493,120 +382,68 @@ function extractKeywords(text: string, limit = 7): string[] {
     .map(([norm]) => surface.get(norm) ?? norm);
 }
 
-function generateDidacticSummary(
-  title: string,
-  paragraphs: string[],
-  keywords: string[]
-): { summary: string; keyTakeaways: string[] } {
+function buildLocalHalfParagraphSummary(title: string, paragraphs: string[], keywords: string[]) {
   const fullText = paragraphs.join(' ');
-  const rawSentences = fullText
+  const sentences = fullText
     .split(/(?<=[.!?])\s+(?=[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ0-9])/)
     .map((s) => s.replace(/\s+/g, ' ').trim())
-    .filter((s) => s.length >= 42 && s.length <= 300);
+    .filter((s) => s.length >= 38 && s.length <= 240);
 
-  if (rawSentences.length === 0) {
-    const fallback = paragraphs[0]?.slice(0, 220) || `Conteúdo indexado sobre ${title}.`;
+  if (sentences.length === 0) {
+    const raw = (paragraphs[0] || `Conteúdo curricular sobre ${title}.`).slice(0, 210);
     return {
-      summary: fallback.endsWith('.') ? fallback : `${fallback}...`,
-      keyTakeaways: keywords.length
-        ? [`Conceitos centrais abordados: ${keywords.slice(0, 4).join(', ')}.`]
-        : [`Tema estruturado a partir do manual original para estudo rápido.`],
+      summary: raw.endsWith('.') ? raw : `${raw}…`,
+      keyTakeaways: keywords.length ? [`Conceitos principais: ${keywords.slice(0, 4).join(', ')}.`] : [],
     };
   }
 
   const kwSet = new Set(keywords.map(normalizeForMatch));
-  const titleWords = new Set(
-    normalizeForMatch(title)
-      .split(/\s+/)
-      .filter((w) => w.length > 3 && !PT_STOPWORDS.has(w))
-  );
+  const didacticRegex = /\b(é o|é a|define-se|consiste em|designa-se|chama-se|divide-se|permite|fórmula|lei de)\b/i;
 
-  const didacticBonusRegex =
-    /\b(é o|é a|é um|é uma|define-se|consiste em|designa-se|chama-se|divide-se|caracteriza-se|carateriza-se|permite|resulta|processo|fórmula|formula|lei de|equação|equacao|função|funcao|importância|importancia|objetivo|objectivo|princípio|principio)\b/i;
+  const ranked = sentences
+    .map((sentence, idx) => {
+      let score = idx === 0 ? 3 : idx <= 2 ? 1.5 : 0;
+      if (didacticRegex.test(sentence)) score += 3.5;
+      const hits = normalizeForMatch(sentence)
+        .split(/[^a-z0-9]+/)
+        .filter((t) => kwSet.has(t)).length;
+      score += Math.min(hits, 4);
+      if (sentence.endsWith('?')) score -= 4;
+      return { sentence, idx, score };
+    })
+    .sort((a, b) => b.score - a.score);
 
-  const scored = rawSentences.map((sentence, idx) => {
-    const norm = normalizeForMatch(sentence);
-    let score = 0;
-
-    // Position bonus (opening definitions carry high academic weight)
-    if (idx === 0) score += 3.2;
-    else if (idx <= 3) score += 1.8;
-
-    // Didactic definition markers
-    if (didacticBonusRegex.test(sentence)) score += 3.5;
-
-    // Keyword overlap
-    const tokens = norm.split(/[^a-z0-9]+/);
-    let kwHits = 0;
-    for (const tok of tokens) {
-      if (kwSet.has(tok)) kwHits += 1;
-      if (titleWords.has(tok)) score += 1.2;
-    }
-    score += Math.min(kwHits * 0.9, 4.5);
-
-    // Ideal length sweet spot
-    if (sentence.length >= 70 && sentence.length <= 210) score += 1.5;
-
-    // Penalize question-only exercise prompts in summaries
-    if (sentence.endsWith('?') || /^(exercício|exercicio|atividade|actividade|responde|calcula|indica)/i.test(sentence)) {
-      score -= 4;
-    }
-
-    return { sentence, idx, score };
-  });
-
-  const ranked = [...scored].sort((a, b) => b.score - a.score);
-
-  // Pick top 2 distinct sentences for summary, restored in reading order
-  const pickedSummary = ranked
-    .slice(0, 2)
-    .sort((a, b) => a.idx - b.idx)
-    .map((item) => item.sentence);
-
-  let summary = pickedSummary.join(' ');
-  if (summary.length > 340) {
-    summary = pickedSummary[0];
+  let summary = ranked[0].sentence;
+  if (ranked[1] && summary.length + ranked[1].sentence.length + 1 <= 220) {
+    const pair = [ranked[0], ranked[1]].sort((a, b) => a.idx - b.idx);
+    summary = `${pair[0].sentence} ${pair[1].sentence}`;
   }
-
-  // Pick 3–4 crisp takeaways (preferring non-duplicate high-signal sentences)
-  const takeawayCandidates: string[] = [];
-  for (const item of ranked) {
-    if (takeawayCandidates.length >= 4) break;
-    if (takeawayCandidates.some((existing) => existing.slice(0, 40) === item.sentence.slice(0, 40))) {
-      continue;
-    }
-    takeawayCandidates.push(item.sentence);
+  if (summary.length > 220) {
+    summary = summary.slice(0, 216).replace(/\s+\S*$/, '') + '…';
   }
 
   return {
     summary,
-    keyTakeaways: takeawayCandidates.slice(0, 4),
+    keyTakeaways: ranked.slice(0, 3).map((r) => r.sentence),
   };
 }
 
 /**
- * Full PDF Dissection Pipeline:
- * Extracts page-by-page text, cleans layout artifacts, detects chapters/units,
- * generates Portuguese didactic summaries & key concepts, and formats a Fólio Manual.
+ * Admin-only PDF extraction & structural dissection into Curriculum Topics.
+ * Produces clean page-indexed drafts ready for server-side Groq ½-paragraph enrichment.
  */
-export async function dissectPdfToManual(
+export async function dissectPdfForAdmin(
   file: File,
-  options: DissectOptions
-): Promise<DissectResult> {
-  const report = (p: DissectionProgress) => options.onProgress?.(p);
-
-  report({
-    stage: 'reading',
-    percent: 5,
-    detail: 'A abrir o ficheiro PDF...',
-  });
+  subject: string,
+  onProgress?: (progress: DissectionProgress) => void
+): Promise<AdminDissectResult> {
+  onProgress?.({ stage: 'reading', percent: 6, detail: 'A abrir o documento PDF…' });
 
   const buffer = await file.arrayBuffer();
   const loadingTask = pdfjsLib.getDocument({ data: new Uint8Array(buffer) });
   const pdfDoc = await loadingTask.promise;
   const totalPages = pdfDoc.numPages;
 
-  // Stage 1: Extract raw lines & font statistics from every page
   const rawPages: Array<{ pageNumber: number; lines: RawTextLine[] }> = [];
   const allFontSizes: number[] = [];
   const edgeLineCounts = new Map<string, number>();
@@ -616,57 +453,44 @@ export async function dissectPdfToManual(
     rawPages.push({ pageNumber: p, lines });
 
     for (const l of lines) {
-      if (l.text.length > 15) {
-        allFontSizes.push(Math.round(l.fontSize * 10) / 10);
-      }
+      if (l.text.length > 15) allFontSizes.push(Math.round(l.fontSize * 10) / 10);
     }
 
-    // Track first & last lines across pages to identify repeating running headers/footers
     if (lines.length >= 3) {
       const topNorm = normalizeForMatch(lines[0].text);
-      const bottomNorm = normalizeForMatch(lines[lines.length - 1].text);
-      if (topNorm.length > 2 && topNorm.length < 90) {
-        edgeLineCounts.set(topNorm, (edgeLineCounts.get(topNorm) ?? 0) + 1);
-      }
-      if (bottomNorm.length > 2 && bottomNorm.length < 90) {
-        edgeLineCounts.set(bottomNorm, (edgeLineCounts.get(bottomNorm) ?? 0) + 1);
-      }
+      const botNorm = normalizeForMatch(lines[lines.length - 1].text);
+      if (topNorm.length > 2 && topNorm.length < 90) edgeLineCounts.set(topNorm, (edgeLineCounts.get(topNorm) ?? 0) + 1);
+      if (botNorm.length > 2 && botNorm.length < 90) edgeLineCounts.set(botNorm, (edgeLineCounts.get(botNorm) ?? 0) + 1);
     }
 
     if (p % 2 === 0 || p === totalPages) {
-      report({
+      onProgress?.({
         stage: 'reading',
-        percent: Math.round(5 + (p / totalPages) * 45),
+        percent: Math.round(6 + (p / totalPages) * 44),
         currentPage: p,
         totalPages,
-        detail: `A extrair texto da página ${p} de ${totalPages}...`,
+        detail: `A extrair página ${p} de ${totalPages}…`,
       });
     }
   }
 
   await loadingTask.destroy();
 
-  // Compute median body font size
   allFontSizes.sort((a, b) => a - b);
-  const bodyFontSize =
-    allFontSizes.length > 0 ? allFontSizes[Math.floor(allFontSizes.length * 0.5)] : 11;
+  const bodyFontSize = allFontSizes.length > 0 ? allFontSizes[Math.floor(allFontSizes.length * 0.5)] : 11;
 
-  // Identify running headers/footers repeated on >= 30% of pages (when doc has >= 4 pages)
   const repeatedEdgeLines = new Set<string>();
   if (totalPages >= 4) {
     const threshold = Math.max(3, Math.floor(totalPages * 0.3));
     for (const [normLine, count] of edgeLineCounts.entries()) {
-      if (count >= threshold) {
-        repeatedEdgeLines.add(normLine);
-      }
+      if (count >= threshold) repeatedEdgeLines.add(normLine);
     }
   }
 
-  // Stage 2: Clean lines into editorial paragraphs & identify headings per page
-  report({
+  onProgress?.({
     stage: 'cleaning',
     percent: 58,
-    detail: 'A limpar quebras de linha, cabeçalhos repetidos e estruturar parágrafos...',
+    detail: 'A limpar cabeçalhos repetidos e estruturar parágrafos…',
   });
 
   const extractedPages: ExtractedPage[] = [];
@@ -674,50 +498,34 @@ export async function dissectPdfToManual(
   let scannedPages = 0;
 
   for (const rp of rawPages) {
-    const { paragraphs, headings } = buildParagraphsFromLines(
-      rp.lines,
-      bodyFontSize,
-      repeatedEdgeLines
-    );
+    const { paragraphs, headings } = buildParagraphsFromLines(rp.lines, bodyFontSize, repeatedEdgeLines);
     const rawText = rp.lines.map((l) => l.text).join(' ');
-    if (paragraphs.length > 0 || headings.length > 0 || rawText.trim().length > 25) {
-      textPages += 1;
-    } else {
-      scannedPages += 1;
-    }
-    extractedPages.push({
-      pageNumber: rp.pageNumber,
-      lines: rp.lines,
-      paragraphs,
-      headings,
-      rawText,
-    });
+    if (paragraphs.length > 0 || headings.length > 0 || rawText.trim().length > 25) textPages += 1;
+    else scannedPages += 1;
+    extractedPages.push({ pageNumber: rp.pageNumber, lines: rp.lines, paragraphs, headings, rawText });
   }
 
-  // Stage 3: Dissect into structured thematic chapters
-  report({
+  onProgress?.({
     stage: 'structuring',
-    percent: 72,
-    detail: 'A identificar unidades, capítulos e números de página exatos...',
+    percent: 68,
+    detail: 'A organizar temas curriculares com páginas exatas…',
   });
 
-  const manualId = `pdf-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-
-  interface DraftChapter {
+  interface Draft {
     title: string;
     unitLabel?: string;
-    pageStart: number;
+    pageNumber: number;
     pageEnd: number;
     paragraphs: string[];
-    pages: ManualPage[];
+    pages: TopicPage[];
   }
 
-  const drafts: DraftChapter[] = [];
-  let currentUnitLabel: string | undefined;
-  let activeDraft: DraftChapter | null = null;
+  const drafts: Draft[] = [];
+  let currentUnit: string | undefined;
+  let active: Draft | null = null;
 
   for (const ep of extractedPages) {
-    const usableParagraphs =
+    const paras =
       ep.paragraphs.length > 0
         ? ep.paragraphs
         : ep.rawText.trim().length > 25
@@ -725,209 +533,114 @@ export async function dissectPdfToManual(
           : [];
 
     if (ep.headings.length > 0) {
-      const primaryHeading = ep.headings[0];
-      const isUnitMarker = /^(unidade|módulo|modulo|parte)\b/i.test(primaryHeading);
-
-      if (isUnitMarker && ep.headings.length > 1) {
-        currentUnitLabel = primaryHeading;
-        const subHeading = ep.headings[1];
-        if (activeDraft && activeDraft.paragraphs.length > 0) {
-          drafts.push(activeDraft);
-        }
-        activeDraft = {
-          title: subHeading,
-          unitLabel: currentUnitLabel,
-          pageStart: ep.pageNumber,
+      const h0 = ep.headings[0];
+      const isUnit = /^(unidade|parte)\b/i.test(h0);
+      if (isUnit && ep.headings.length > 1) {
+        currentUnit = h0;
+        if (active && active.paragraphs.length > 0) drafts.push(active);
+        active = {
+          title: ep.headings[1],
+          unitLabel: currentUnit,
+          pageNumber: ep.pageNumber,
           pageEnd: ep.pageNumber,
-          paragraphs: [...usableParagraphs],
-          pages: usableParagraphs.length
-            ? [{ pageNumber: ep.pageNumber, paragraphs: usableParagraphs }]
-            : [],
+          paragraphs: [...paras],
+          pages: paras.length ? [{ pageNumber: ep.pageNumber, paragraphs: paras }] : [],
         };
         continue;
       }
+      if (isUnit) currentUnit = h0;
 
-      if (isUnitMarker) {
-        currentUnitLabel = primaryHeading;
-      }
-
-      // Start new chapter if current one already has meaningful content
-      const currentChars = activeDraft ? activeDraft.paragraphs.join(' ').length : 0;
-      if (!activeDraft || currentChars >= 240) {
-        if (activeDraft && activeDraft.paragraphs.length > 0) {
-          drafts.push(activeDraft);
-        }
-        activeDraft = {
-          title: primaryHeading,
-          unitLabel: isUnitMarker ? undefined : currentUnitLabel,
-          pageStart: ep.pageNumber,
+      const curLen = active ? active.paragraphs.join(' ').length : 0;
+      if (!active || curLen >= 240) {
+        if (active && active.paragraphs.length > 0) drafts.push(active);
+        active = {
+          title: h0,
+          unitLabel: isUnit ? undefined : currentUnit,
+          pageNumber: ep.pageNumber,
           pageEnd: ep.pageNumber,
-          paragraphs: [...usableParagraphs],
-          pages: usableParagraphs.length
-            ? [{ pageNumber: ep.pageNumber, paragraphs: usableParagraphs }]
-            : [],
+          paragraphs: [...paras],
+          pages: paras.length ? [{ pageNumber: ep.pageNumber, paragraphs: paras }] : [],
         };
         continue;
-      } else if (!activeDraft.title || activeDraft.title.startsWith('Secção')) {
-        activeDraft.title = primaryHeading;
       }
     }
 
-    if (usableParagraphs.length === 0) continue;
+    if (paras.length === 0) continue;
 
-    // If no headings were detected yet, start a thematic folio every 3 pages
-    if (!activeDraft) {
-      activeDraft = {
-        title: `Secção inicial · ${options.subject}`,
-        unitLabel: currentUnitLabel,
-        pageStart: ep.pageNumber,
+    if (!active) {
+      active = {
+        title: `Tema inicial · ${subject}`,
+        unitLabel: currentUnit,
+        pageNumber: ep.pageNumber,
         pageEnd: ep.pageNumber,
-        paragraphs: [...usableParagraphs],
-        pages: [{ pageNumber: ep.pageNumber, paragraphs: usableParagraphs }],
+        paragraphs: [...paras],
+        pages: [{ pageNumber: ep.pageNumber, paragraphs: paras }],
       };
-    } else if (
-      ep.pageNumber - activeDraft.pageStart >= 4 &&
-      activeDraft.paragraphs.join(' ').length >= 1600
-    ) {
-      drafts.push(activeDraft);
-      const leadWords = extractKeywords(usableParagraphs.join(' '), 3);
-      const inferredTitle =
-        leadWords.length > 0
-          ? `${leadWords.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(', ')}`
-          : `Continuação · Página ${ep.pageNumber}`;
-      activeDraft = {
-        title: inferredTitle,
-        unitLabel: currentUnitLabel,
-        pageStart: ep.pageNumber,
+    } else if (ep.pageNumber - active.pageNumber >= 4 && active.paragraphs.join(' ').length >= 1600) {
+      drafts.push(active);
+      const lead = extractKeywords(paras.join(' '), 3);
+      active = {
+        title: lead.length
+          ? lead.map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(', ')
+          : `Matéria · Página ${ep.pageNumber}`,
+        unitLabel: currentUnit,
+        pageNumber: ep.pageNumber,
         pageEnd: ep.pageNumber,
-        paragraphs: [...usableParagraphs],
-        pages: [{ pageNumber: ep.pageNumber, paragraphs: usableParagraphs }],
+        paragraphs: [...paras],
+        pages: [{ pageNumber: ep.pageNumber, paragraphs: paras }],
       };
     } else {
-      activeDraft.pageEnd = ep.pageNumber;
-      activeDraft.paragraphs.push(...usableParagraphs);
-      activeDraft.pages.push({ pageNumber: ep.pageNumber, paragraphs: usableParagraphs });
+      active.pageEnd = ep.pageNumber;
+      active.paragraphs.push(...paras);
+      active.pages.push({ pageNumber: ep.pageNumber, paragraphs: paras });
     }
   }
 
-  if (activeDraft && activeDraft.paragraphs.length > 0) {
-    drafts.push(activeDraft);
-  }
+  if (active && active.paragraphs.length > 0) drafts.push(active);
 
-  // Handle scanned / image-only PDFs cleanly so the user still gets an honest result
   if (drafts.length === 0) {
-    drafts.push({
-      title: `${options.title} (Digitalização por imagem)`,
-      unitLabel: 'Aviso de Extração',
-      pageStart: 1,
-      pageEnd: totalPages,
-      paragraphs: [
-        `Este ficheiro PDF (${totalPages} páginas) contém páginas digitalizadas como imagem sem camada de texto selecionável incorporada.`,
-        'Para indexação automática por parágrafo e resumo didático, utilize um PDF com texto selecionável ou ative o processamento OCR no backend do Fólio na próxima fase.',
-      ],
-      pages: [
-        {
-          pageNumber: 1,
-          paragraphs: [
-            `Este ficheiro PDF (${totalPages} páginas) contém páginas digitalizadas como imagem sem camada de texto selecionável incorporada.`,
-            'Para indexação automática por parágrafo e resumo didático, utilize um PDF com texto selecionável ou ative o processamento OCR no backend do Fólio na próxima fase.',
-          ],
-        },
-      ],
-    });
+    throw new Error(
+      'Nenhuma camada de texto selecionável foi encontrada neste PDF (parece ser imagem digitalizada).'
+    );
   }
-
-  // Stage 4: Generate didactic summaries, key takeaways & keywords per chapter
-  report({
-    stage: 'summarizing',
-    percent: 86,
-    detail: `A gerar resumos didáticos e conceitos-chave para ${drafts.length} capítulos...`,
-  });
 
   let totalWords = 0;
-  let totalKeywords = 0;
-
-  const chapters: ManualChapter[] = drafts.map((draft, index) => {
-    const joined = draft.paragraphs.join(' ');
-    const wordCount = joined.split(/\s+/).filter(Boolean).length;
-    totalWords += wordCount;
-
-    const keywords = extractKeywords(`${draft.title} ${joined}`, 7);
-    totalKeywords += keywords.length;
-
-    // Improve generic opening section title using top extracted keywords
-    let finalTitle = draft.title;
-    if (finalTitle.startsWith('Secção inicial') && keywords.length >= 2) {
-      const pretty = keywords
+  const topics: AdminTopicDraft[] = drafts.map((d, idx) => {
+    const joined = d.paragraphs.join(' ');
+    const wc = joined.split(/\s+/).filter(Boolean).length;
+    totalWords += wc;
+    const keywords = extractKeywords(`${d.title} ${joined}`, 7);
+    let finalTitle = d.title;
+    if (finalTitle.startsWith('Tema inicial') && keywords.length >= 2) {
+      finalTitle = `${subject}: ${keywords
         .slice(0, 3)
         .map((k) => k.charAt(0).toUpperCase() + k.slice(1))
-        .join(' e ');
-      finalTitle = `${options.subject}: ${pretty}`;
+        .join(' e ')}`;
     }
-
-    const { summary, keyTakeaways } = generateDidacticSummary(
-      finalTitle,
-      draft.paragraphs,
-      keywords
-    );
-
-    const previewParagraphs = draft.paragraphs.slice(0, 2);
-    const readingMinutes = Math.max(1, Math.round(wordCount / 180));
-
+    const { summary, keyTakeaways } = buildLocalHalfParagraphSummary(finalTitle, d.paragraphs, keywords);
     return {
-      id: `${manualId}-ch-${index + 1}`,
-      manualId,
+      unitLabel: d.unitLabel || `Unidade ${idx + 1}`,
       title: finalTitle,
-      unitLabel: draft.unitLabel || `Fólio ${index + 1} · Págs. ${draft.pageStart}–${draft.pageEnd}`,
-      pageStart: draft.pageStart,
-      pageEnd: draft.pageEnd,
-      summary,
+      pageNumber: d.pageNumber,
+      pageEnd: d.pageEnd,
+      summaryHalfParagraph: summary,
+      previewParagraphs: d.paragraphs.slice(0, 2),
       keyTakeaways,
       keywords,
-      previewParagraphs:
-        previewParagraphs.length > 0 ? previewParagraphs : [summary],
-      paragraphs: draft.paragraphs,
-      pages: draft.pages,
-      readingMinutes,
+      paragraphs: d.paragraphs,
+      pages: d.pages,
+      readingMinutes: Math.max(1, Math.round(wc / 180)),
     };
   });
 
-  const manual: Manual = {
-    id: manualId,
-    title: options.title.trim() || `${options.subject} — ${formatGrade(options.gradeNumber)}`,
-    subject: options.subject,
-    grade: formatGrade(options.gradeNumber),
-    gradeNumber: options.gradeNumber,
-    cycle: gradeToCycle(options.gradeNumber),
-    publisher: options.publisher?.trim() || 'Importado via PDF · Adaptado pelo Fólio',
-    year: String(new Date().getFullYear()),
-    totalPages,
-    priceMt: options.priceMt ?? 17,
-    sourceType: 'pdf_upload',
-    fileName: file.name,
-    fileSizeBytes: file.size,
-    defaultUnlocked: options.defaultUnlocked,
-    createdAt: new Date().toISOString(),
-    chapters,
-  };
-
-  report({
-    stage: 'done',
-    percent: 100,
-    totalPages,
-    currentPage: totalPages,
-    detail: `Concluído: ${chapters.length} capítulos indexados a partir de ${totalPages} páginas.`,
-  });
-
   return {
-    manual,
+    topics,
     stats: {
       totalPages,
       textPages,
       scannedPages,
-      chaptersCount: chapters.length,
+      topicsCount: topics.length,
       totalWords,
-      keywordsCount: totalKeywords,
     },
   };
 }

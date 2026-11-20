@@ -1,5 +1,7 @@
+import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import { Pool } from 'pg';
+import { INITIAL_SNE_CURRICULA } from './seedData';
 
 dotenv.config();
 
@@ -8,11 +10,21 @@ const connectionString = process.env.DATABASE_URL;
 export const pool = connectionString
   ? new Pool({
       connectionString,
-      max: 8,
+      max: 10,
       idleTimeoutMillis: 30000,
       connectionTimeoutMillis: 10000,
     })
   : null;
+
+export function normalizeSearchText(input: string): string {
+  return input
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
 
 export async function ensureSchema(): Promise<{ connected: boolean; error?: string }> {
   if (!pool) {
@@ -20,80 +32,224 @@ export async function ensureSchema(): Promise<{ connected: boolean; error?: stri
   }
 
   try {
+    // 1. Metadata table (tracks idempotent one-time seeds)
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS folio_manuals (
-        id TEXT PRIMARY KEY,
-        title TEXT NOT NULL,
-        subject TEXT NOT NULL,
+      CREATE TABLE IF NOT EXISTS folio_meta (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+    `);
+
+    // 2. users (Native Auth on CockroachDB PostgreSQL)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        email TEXT UNIQUE NOT NULL,
+        password_hash TEXT NOT NULL,
+        role TEXT NOT NULL DEFAULT 'student',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+    `);
+
+    // 3. user_sessions (Anti-sharing: max 2 concurrent sessions per account)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS user_sessions (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        token_hash TEXT UNIQUE NOT NULL,
+        device_label TEXT NOT NULL DEFAULT 'Dispositivo',
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        last_seen_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        expires_at TIMESTAMPTZ NOT NULL
+      );
+    `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_user_sessions_user_id
+      ON user_sessions (user_id, last_seen_at DESC);
+    `);
+
+    // 4. curricula (Subject + Grade units published by Admin)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS curricula (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        slug TEXT UNIQUE,
         grade TEXT NOT NULL,
         grade_number INT NOT NULL,
         cycle TEXT NOT NULL,
-        publisher TEXT NOT NULL,
-        year TEXT,
+        subject TEXT NOT NULL,
         total_pages INT NOT NULL DEFAULT 1,
-        price_mt INT NOT NULL DEFAULT 17,
-        source_type TEXT NOT NULL DEFAULT 'pdf_upload',
-        file_name TEXT,
-        file_size_bytes BIGINT,
-        default_unlocked BOOLEAN NOT NULL DEFAULT FALSE,
-        ai_enriched BOOLEAN NOT NULL DEFAULT FALSE,
-        ai_model TEXT,
+        price_mt NUMERIC(10, 2) NOT NULL DEFAULT 17.00,
+        status TEXT NOT NULL DEFAULT 'published',
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
     `);
 
     await pool.query(`
-      ALTER TABLE folio_manuals ADD COLUMN IF NOT EXISTS ai_enriched BOOLEAN NOT NULL DEFAULT FALSE;
-    `);
-    await pool.query(`
-      ALTER TABLE folio_manuals ADD COLUMN IF NOT EXISTS ai_model TEXT;
+      CREATE INDEX IF NOT EXISTS idx_curricula_status_cycle
+      ON curricula (status, cycle, grade_number);
     `);
 
+    // 5. topics (Indexed curriculum topics & pages with ½-paragraph Groq summaries)
     await pool.query(`
-      CREATE TABLE IF NOT EXISTS folio_chapters (
-        id TEXT PRIMARY KEY,
-        manual_id TEXT NOT NULL REFERENCES folio_manuals(id) ON DELETE CASCADE,
-        chapter_order INT NOT NULL DEFAULT 0,
+      CREATE TABLE IF NOT EXISTS topics (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        curriculum_id UUID NOT NULL REFERENCES curricula(id) ON DELETE CASCADE,
+        topic_order INT NOT NULL DEFAULT 0,
         unit_label TEXT,
         title TEXT NOT NULL,
-        page_start INT NOT NULL,
-        page_end INT NOT NULL,
-        summary TEXT NOT NULL,
+        page_number INT NOT NULL,
+        page_end INT NOT NULL DEFAULT 1,
+        summary_half_paragraph TEXT NOT NULL,
+        preview_paragraphs JSONB NOT NULL DEFAULT '[]'::jsonb,
         key_takeaways JSONB NOT NULL DEFAULT '[]'::jsonb,
         keywords JSONB NOT NULL DEFAULT '[]'::jsonb,
-        preview_paragraphs JSONB NOT NULL DEFAULT '[]'::jsonb,
-        paragraphs JSONB NOT NULL DEFAULT '[]'::jsonb,
+        full_text TEXT NOT NULL,
         pages JSONB,
         reading_minutes INT NOT NULL DEFAULT 3,
-        summary_source TEXT NOT NULL DEFAULT 'local',
-        search_text TEXT NOT NULL DEFAULT ''
+        search_normalized TEXT NOT NULL DEFAULT ''
       );
     `);
 
     await pool.query(`
-      ALTER TABLE folio_chapters ADD COLUMN IF NOT EXISTS summary_source TEXT NOT NULL DEFAULT 'local';
+      CREATE INDEX IF NOT EXISTS idx_topics_curriculum_order
+      ON topics (curriculum_id, topic_order);
     `);
 
+    // 6. user_unlocks (17 MT M-Pesa / e-Mola unlocks bound to user account)
     await pool.query(`
-      CREATE INDEX IF NOT EXISTS idx_folio_chapters_manual_id
-      ON folio_chapters (manual_id, chapter_order);
-    `);
-
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS folio_unlocks (
-        id TEXT PRIMARY KEY,
-        manual_id TEXT NOT NULL REFERENCES folio_manuals(id) ON DELETE CASCADE,
-        operator TEXT NOT NULL,
-        phone_masked TEXT NOT NULL,
-        amount_mt INT NOT NULL DEFAULT 17,
-        reference TEXT NOT NULL,
-        unlocked_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      CREATE TABLE IF NOT EXISTS user_unlocks (
+        id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        curriculum_id UUID NOT NULL REFERENCES curricula(id) ON DELETE CASCADE,
+        payment_provider TEXT NOT NULL,
+        phone_masked TEXT NOT NULL DEFAULT '•••',
+        amount_mt NUMERIC(10, 2) NOT NULL DEFAULT 17.00,
+        transaction_ref TEXT NOT NULL,
+        unlocked_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        UNIQUE (user_id, curriculum_id)
       );
     `);
+
+    await pool.query(`
+      CREATE INDEX IF NOT EXISTS idx_user_unlocks_user_id
+      ON user_unlocks (user_id, unlocked_at DESC);
+    `);
+
+    // Bootstrap Admin account from env (idempotent, never downgrades existing admin)
+    await bootstrapAdminUser();
+
+    // Seed initial 6 SNE curricula once so public search is immediately rich (editable/deletable in /admin)
+    await seedInitialCurriculaOnce();
 
     return { connected: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { connected: false, error: message };
+  }
+}
+
+async function bootstrapAdminUser(): Promise<void> {
+  if (!pool) return;
+  const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
+  const adminPassword = process.env.ADMIN_PASSWORD?.trim();
+  if (!adminEmail || !adminPassword || adminPassword.length < 6) return;
+
+  const existing = await pool.query('SELECT id, role FROM users WHERE email = $1', [adminEmail]);
+  if (existing.rows.length === 0) {
+    const hash = await bcrypt.hash(adminPassword, 10);
+    await pool.query(
+      `INSERT INTO users (email, password_hash, role) VALUES ($1, $2, 'admin') ON CONFLICT (email) DO NOTHING`,
+      [adminEmail, hash]
+    );
+  } else if (existing.rows[0].role !== 'admin') {
+    await pool.query(`UPDATE users SET role = 'admin' WHERE id = $1`, [existing.rows[0].id]);
+  }
+}
+
+async function seedInitialCurriculaOnce(): Promise<void> {
+  if (!pool) return;
+  const flag = await pool.query(`SELECT value FROM folio_meta WHERE key = 'initial_sne_seeded_v1'`);
+  if (flag.rows.length > 0) return;
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const curr of INITIAL_SNE_CURRICULA) {
+      const inserted = await client.query(
+        `
+        INSERT INTO curricula (slug, grade, grade_number, cycle, subject, total_pages, price_mt, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, 'published')
+        ON CONFLICT (slug) DO NOTHING
+        RETURNING id
+        `,
+        [
+          curr.slug,
+          curr.grade,
+          curr.gradeNumber,
+          curr.cycle,
+          curr.subject,
+          curr.totalPages,
+          curr.priceMt,
+        ]
+      );
+
+      const curriculumId = inserted.rows[0]?.id as string | undefined;
+      if (!curriculumId) continue;
+
+      for (let i = 0; i < curr.topics.length; i++) {
+        const t = curr.topics[i];
+        const fullText = t.paragraphs.join('\n\n');
+        const searchNorm = normalizeSearchText(
+          [
+            curr.subject,
+            curr.grade,
+            t.unitLabel || '',
+            t.title,
+            t.summaryHalfParagraph,
+            ...t.keywords,
+            ...t.keyTakeaways,
+            fullText.slice(0, 1800),
+          ].join(' ')
+        );
+
+        await client.query(
+          `
+          INSERT INTO topics (
+            curriculum_id, topic_order, unit_label, title, page_number, page_end,
+            summary_half_paragraph, preview_paragraphs, key_takeaways, keywords,
+            full_text, pages, reading_minutes, search_normalized
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13,$14)
+          `,
+          [
+            curriculumId,
+            i,
+            t.unitLabel || null,
+            t.title,
+            t.pageNumber,
+            t.pageEnd,
+            t.summaryHalfParagraph,
+            JSON.stringify(t.previewParagraphs),
+            JSON.stringify(t.keyTakeaways),
+            JSON.stringify(t.keywords),
+            fullText,
+            t.pages ? JSON.stringify(t.pages) : null,
+            t.readingMinutes,
+            searchNorm,
+          ]
+        );
+      }
+    }
+
+    await client.query(
+      `INSERT INTO folio_meta (key, value) VALUES ('initial_sne_seeded_v1', 'true') ON CONFLICT (key) DO NOTHING`
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
   }
 }

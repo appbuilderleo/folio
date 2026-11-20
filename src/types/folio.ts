@@ -4,71 +4,120 @@ export type PaymentOperator = 'mpesa' | 'emola';
 
 export type ReaderTheme = 'paper' | 'sepia' | 'night';
 
-export interface ManualPage {
+export type UserRole = 'student' | 'admin';
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  role: UserRole;
+  createdAt: string;
+}
+
+export interface AuthSessionState {
+  user: UserProfile;
+  token: string;
+  activeSessions: number;
+  maxSessions: number;
+  evictedOldSession?: boolean;
+  unlockedCurriculumIds: string[];
+}
+
+export interface TopicPage {
   pageNumber: number;
   paragraphs: string[];
-  rawText?: string;
 }
 
-export interface ManualChapter {
+/**
+ * Lightweight 3G/4G search/discovery payload returned by GET /api/topics.
+ * Strictly excludes full_text and pages so unpaid content is never leaked.
+ */
+export interface TopicSearchItem {
   id: string;
-  manualId: string;
-  title: string;
+  curriculumId: string;
+  subject: string;
+  grade: string;
+  gradeNumber: number;
+  cycle: Exclude<SchoolCycle, 'all'>;
   unitLabel?: string;
-  pageStart: number;
+  title: string;
+  pageNumber: number;
   pageEnd: number;
-  summary: string;
+  summaryHalfParagraph: string;
+  previewParagraphs: string[];
+  keyTakeawaysPreview: string[];
+  readingMinutes: number;
+  priceMt: number;
+  curriculumTopicsCount: number;
+  totalPages: number;
+  unlocked: boolean;
+}
+
+/**
+ * Protected full topic content — only delivered by GET /api/curricula/:id/content
+ * after server verifies authentication + user_unlocks (or admin role).
+ */
+export interface UnlockedTopic {
+  id: string;
+  curriculumId: string;
+  unitLabel?: string;
+  title: string;
+  pageNumber: number;
+  pageEnd: number;
+  summaryHalfParagraph: string;
   keyTakeaways: string[];
   keywords: string[];
-  previewParagraphs: string[];
   paragraphs: string[];
-  pages?: ManualPage[];
+  pages?: TopicPage[];
   readingMinutes: number;
-  summarySource?: 'groq' | 'local';
 }
 
-export interface Manual {
+export interface UnlockedCurriculum {
   id: string;
-  title: string;
   subject: string;
-  grade: string; // e.g. "10.ª Classe"
-  gradeNumber: number; // 1..12
+  grade: string;
+  gradeNumber: number;
   cycle: Exclude<SchoolCycle, 'all'>;
-  publisher: string;
-  year?: string;
   totalPages: number;
   priceMt: number;
-  sourceType: 'catalog' | 'pdf_upload';
-  fileName?: string;
-  fileSizeBytes?: number;
-  defaultUnlocked?: boolean;
-  aiEnriched?: boolean;
-  aiModel?: string;
-  createdAt: string;
-  chapters: ManualChapter[];
+  unlockedAt?: string;
+  transactionRef?: string;
+  paymentProvider?: PaymentOperator;
+  topics: UnlockedTopic[];
 }
 
-export interface SearchHit {
-  manual: Manual;
-  chapter: ManualChapter;
-  matchedPage: number;
-  score: number;
-  matchedSnippet?: string;
+export interface PreviewCurriculumInfo {
+  id: string;
+  subject: string;
+  grade: string;
+  gradeNumber: number;
+  cycle: Exclude<SchoolCycle, 'all'>;
+  totalPages: number;
+  priceMt: number;
+  topics: Array<{
+    id: string;
+    title: string;
+    unitLabel?: string;
+    pageNumber: number;
+    pageEnd: number;
+    readingMinutes: number;
+  }>;
 }
 
 export interface UnlockReceipt {
-  manualId: string;
-  operator: PaymentOperator;
-  phone: string;
+  curriculumId: string;
+  provider: PaymentOperator;
+  phoneMasked: string;
   amountMt: number;
-  reference: string;
+  transactionRef: string;
   unlockedAt: string;
-  syncedOffline: boolean;
 }
 
 export interface BookmarkEntry {
-  manualId: string;
-  chapterId: string;
+  curriculumId: string;
+  topicId: string;
+  subject: string;
+  grade: string;
+  topicTitle: string;
   pageNumber: number;
   savedAt: string;
 }
@@ -79,4 +128,51 @@ export interface DissectionProgress {
   currentPage?: number;
   totalPages?: number;
   detail: string;
+}
+
+/**
+ * Admin-only DTOs for /admin panel
+ */
+export interface AdminTopicDraft {
+  unitLabel?: string;
+  title: string;
+  pageNumber: number;
+  pageEnd: number;
+  summaryHalfParagraph: string;
+  previewParagraphs: string[];
+  keyTakeaways: string[];
+  keywords: string[];
+  paragraphs: string[];
+  pages?: TopicPage[];
+  readingMinutes: number;
+}
+
+export interface AdminCurriculumOverview {
+  id: string;
+  subject: string;
+  grade: string;
+  gradeNumber: number;
+  cycle: Exclude<SchoolCycle, 'all'>;
+  totalPages: number;
+  priceMt: number;
+  status: 'processing' | 'published';
+  topicsCount: number;
+  unlocksCount: number;
+  createdAt: string;
+  topicsPreview: Array<{
+    id: string;
+    title: string;
+    pageNumber: number;
+    summaryHalfParagraph: string;
+  }>;
+}
+
+export interface AdminDashboardStats {
+  totalCurricula: number;
+  totalTopics: number;
+  totalStudents: number;
+  totalUnlocks: number;
+  revenueMt: number;
+  groqEnabled: boolean;
+  groqModel?: string;
 }

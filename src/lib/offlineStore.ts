@@ -1,21 +1,23 @@
-import type { BookmarkEntry, Manual, ReaderTheme, UnlockReceipt } from '../types/folio';
+import type { BookmarkEntry, ReaderTheme, UnlockedCurriculum } from '../types/folio';
 
-const DB_NAME = 'folio_offline_vault_v1';
-const STORE_MANUALS = 'encrypted_manuals';
-const LS_UNLOCKS = 'folio_unlocks_v1';
-const LS_BOOKMARKS = 'folio_bookmarks_v1';
+const DB_NAME = 'folio_offline_vault_v2';
+const STORE_CURRICULA = 'encrypted_curricula';
+const LS_BOOKMARKS = 'folio_bookmarks_v2';
 const LS_READER_PREFS = 'folio_reader_prefs_v1';
-const LS_DEVICE_KEY = 'folio_sandbox_key_v1';
+const LS_DEVICE_KEY = 'folio_sandbox_key_v2';
 
 export interface ReaderPreferences {
   theme: ReaderTheme;
   fontSizeStep: number; // 0..3 -> 16, 18, 20, 22
 }
 
-interface EncryptedVaultRecord {
-  id: string;
-  iv: number[];
-  cipher: number[];
+interface EncryptedRecord {
+  vaultKey: string; // `${userId}:${curriculumId}`
+  userId: string;
+  curriculumId: string;
+  iv?: number[];
+  cipher?: number[];
+  plain?: string;
   savedAt: string;
 }
 
@@ -24,8 +26,8 @@ function openVaultDb(): Promise<IDBDatabase> {
     const req = indexedDB.open(DB_NAME, 1);
     req.onupgradeneeded = () => {
       const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_MANUALS)) {
-        db.createObjectStore(STORE_MANUALS, { keyPath: 'id' });
+      if (!db.objectStoreNames.contains(STORE_CURRICULA)) {
+        db.createObjectStore(STORE_CURRICULA, { keyPath: 'vaultKey' });
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -61,103 +63,120 @@ async function getOrCreateSandboxKey(): Promise<CryptoKey | null> {
   }
 }
 
-export async function saveManualToOfflineVault(manual: Manual): Promise<void> {
-  const db = await openVaultDb();
-  const payload = JSON.stringify(manual);
-  const key = await getOrCreateSandboxKey();
-
-  let record: EncryptedVaultRecord | { id: string; plain: string; savedAt: string };
-
-  if (key) {
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const encoded = new TextEncoder().encode(payload);
-    const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
-    record = {
-      id: manual.id,
-      iv: Array.from(iv),
-      cipher: Array.from(new Uint8Array(encrypted)),
-      savedAt: new Date().toISOString(),
-    };
-  } else {
-    record = {
-      id: manual.id,
-      plain: payload,
-      savedAt: new Date().toISOString(),
-    };
-  }
-
-  await new Promise<void>((resolve, reject) => {
-    const tx = db.transaction(STORE_MANUALS, 'readwrite');
-    tx.objectStore(STORE_MANUALS).put(record);
-    tx.oncomplete = () => resolve();
-    tx.onerror = () => reject(tx.error);
-  });
-}
-
-export async function loadOfflineVaultManuals(): Promise<Manual[]> {
+export async function saveCurriculumToOfflineVault(
+  userId: string,
+  curriculum: UnlockedCurriculum
+): Promise<void> {
   try {
     const db = await openVaultDb();
+    const payload = JSON.stringify(curriculum);
     const key = await getOrCreateSandboxKey();
+    const vaultKey = `${userId}:${curriculum.id}`;
 
-    const rows = await new Promise<Array<Record<string, unknown>>>((resolve, reject) => {
-      const tx = db.transaction(STORE_MANUALS, 'readonly');
-      const req = tx.objectStore(STORE_MANUALS).getAll();
-      req.onsuccess = () => resolve(req.result as Array<Record<string, unknown>>);
-      req.onerror = () => reject(req.error);
-    });
-
-    const manuals: Manual[] = [];
-    for (const row of rows) {
-      try {
-        if (typeof row.plain === 'string') {
-          manuals.push(JSON.parse(row.plain) as Manual);
-        } else if (key && Array.isArray(row.iv) && Array.isArray(row.cipher)) {
-          const decrypted = await crypto.subtle.decrypt(
-            { name: 'AES-GCM', iv: new Uint8Array(row.iv as number[]) },
-            key,
-            new Uint8Array(row.cipher as number[])
-          );
-          const json = new TextDecoder().decode(decrypted);
-          manuals.push(JSON.parse(json) as Manual);
-        }
-      } catch {
-        // skip corrupted or key-mismatched entry
-      }
+    let record: EncryptedRecord;
+    if (key) {
+      const iv = crypto.getRandomValues(new Uint8Array(12));
+      const encoded = new TextEncoder().encode(payload);
+      const encrypted = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
+      record = {
+        vaultKey,
+        userId,
+        curriculumId: curriculum.id,
+        iv: Array.from(iv),
+        cipher: Array.from(new Uint8Array(encrypted)),
+        savedAt: new Date().toISOString(),
+      };
+    } else {
+      record = {
+        vaultKey,
+        userId,
+        curriculumId: curriculum.id,
+        plain: payload,
+        savedAt: new Date().toISOString(),
+      };
     }
-    return manuals;
-  } catch {
-    return [];
-  }
-}
 
-export async function deleteManualFromOfflineVault(manualId: string): Promise<void> {
-  try {
-    const db = await openVaultDb();
     await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction(STORE_MANUALS, 'readwrite');
-      tx.objectStore(STORE_MANUALS).delete(manualId);
+      const tx = db.transaction(STORE_CURRICULA, 'readwrite');
+      tx.objectStore(STORE_CURRICULA).put(record);
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
   } catch {
-    // ignore
+    // ignore IndexedDB quota/private-mode errors gracefully
   }
 }
 
-export function loadUnlockReceipts(): Record<string, UnlockReceipt> {
+export async function loadCurriculumFromOfflineVault(
+  userId: string,
+  curriculumId: string
+): Promise<UnlockedCurriculum | null> {
   try {
-    const raw = localStorage.getItem(LS_UNLOCKS);
-    return raw ? (JSON.parse(raw) as Record<string, UnlockReceipt>) : {};
+    const db = await openVaultDb();
+    const key = await getOrCreateSandboxKey();
+    const vaultKey = `${userId}:${curriculumId}`;
+
+    const row = await new Promise<EncryptedRecord | undefined>((resolve, reject) => {
+      const tx = db.transaction(STORE_CURRICULA, 'readonly');
+      const req = tx.objectStore(STORE_CURRICULA).get(vaultKey);
+      req.onsuccess = () => resolve(req.result as EncryptedRecord | undefined);
+      req.onerror = () => reject(req.error);
+    });
+
+    if (!row) return null;
+    if (typeof row.plain === 'string') {
+      return JSON.parse(row.plain) as UnlockedCurriculum;
+    }
+    if (key && Array.isArray(row.iv) && Array.isArray(row.cipher)) {
+      const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: new Uint8Array(row.iv) },
+        key,
+        new Uint8Array(row.cipher)
+      );
+      return JSON.parse(new TextDecoder().decode(decrypted)) as UnlockedCurriculum;
+    }
+    return null;
   } catch {
-    return {};
+    return null;
   }
 }
 
-export function saveUnlockReceipt(receipt: UnlockReceipt): Record<string, UnlockReceipt> {
-  const current = loadUnlockReceipts();
-  const next = { ...current, [receipt.manualId]: receipt };
-  localStorage.setItem(LS_UNLOCKS, JSON.stringify(next));
-  return next;
+export async function loadAllOfflineCurriculaForUser(
+  userId: string
+): Promise<UnlockedCurriculum[]> {
+  try {
+    const db = await openVaultDb();
+    const key = await getOrCreateSandboxKey();
+
+    const rows = await new Promise<EncryptedRecord[]>((resolve, reject) => {
+      const tx = db.transaction(STORE_CURRICULA, 'readonly');
+      const req = tx.objectStore(STORE_CURRICULA).getAll();
+      req.onsuccess = () => resolve((req.result as EncryptedRecord[]) || []);
+      req.onerror = () => reject(req.error);
+    });
+
+    const out: UnlockedCurriculum[] = [];
+    for (const row of rows) {
+      if (row.userId !== userId) continue;
+      try {
+        if (typeof row.plain === 'string') {
+          out.push(JSON.parse(row.plain) as UnlockedCurriculum);
+        } else if (key && Array.isArray(row.iv) && Array.isArray(row.cipher)) {
+          const decrypted = await crypto.subtle.decrypt(
+            { name: 'AES-GCM', iv: new Uint8Array(row.iv) },
+            key,
+            new Uint8Array(row.cipher)
+          );
+          out.push(JSON.parse(new TextDecoder().decode(decrypted)) as UnlockedCurriculum);
+        }
+      } catch {
+        // skip corrupted item
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
 }
 
 export function loadBookmarks(): BookmarkEntry[] {
@@ -172,10 +191,10 @@ export function loadBookmarks(): BookmarkEntry[] {
 export function toggleBookmarkEntry(entry: BookmarkEntry): BookmarkEntry[] {
   const current = loadBookmarks();
   const exists = current.some(
-    (b) => b.manualId === entry.manualId && b.chapterId === entry.chapterId
+    (b) => b.curriculumId === entry.curriculumId && b.topicId === entry.topicId
   );
   const next = exists
-    ? current.filter((b) => !(b.manualId === entry.manualId && b.chapterId === entry.chapterId))
+    ? current.filter((b) => !(b.curriculumId === entry.curriculumId && b.topicId === entry.topicId))
     : [entry, ...current];
   localStorage.setItem(LS_BOOKMARKS, JSON.stringify(next));
   return next;
@@ -184,9 +203,7 @@ export function toggleBookmarkEntry(entry: BookmarkEntry): BookmarkEntry[] {
 export function loadReaderPreferences(): ReaderPreferences {
   try {
     const raw = localStorage.getItem(LS_READER_PREFS);
-    if (raw) {
-      return JSON.parse(raw) as ReaderPreferences;
-    }
+    if (raw) return JSON.parse(raw) as ReaderPreferences;
   } catch {
     // ignore
   }
