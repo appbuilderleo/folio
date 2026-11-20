@@ -20,9 +20,12 @@ import {
   type DissectResult,
   type PdfQuickInspect,
 } from '../lib/pdfDissector';
+import { enrichManualWithCloudAI } from '../lib/apiClient';
 import type { DissectionProgress, Manual } from '../types/folio';
 
 interface PdfUploadModalProps {
+  groqEnabled: boolean;
+  groqModel?: string;
   onClose: () => void;
   onManualDissected: (manual: Manual) => Promise<{ cloudSaved: boolean }>;
   onOpenManualNow: (manual: Manual) => void;
@@ -33,7 +36,8 @@ const PIPELINE_STEPS: Array<{ key: DissectionProgress['stage']; label: string }>
   { key: 'reading', label: 'Extração página a página do PDF' },
   { key: 'cleaning', label: 'Limpeza tipográfica e remoção de cabeçalhos repetidos' },
   { key: 'structuring', label: 'Segmentação em unidades, capítulos e números de página' },
-  { key: 'summarizing', label: 'Geração de resumos didáticos, pontos-chave e conceitos' },
+  { key: 'summarizing', label: 'Estruturação base de excertos e pontos-chave' },
+  { key: 'ai_enriching', label: 'Enriquecimento em lote com IA Groq (resumos e palavras-chave)' },
   { key: 'saving', label: 'Indexação no CockroachDB e cofre encriptado offline' },
 ];
 
@@ -43,6 +47,8 @@ function formatFileSize(bytes: number): string {
 }
 
 export function PdfUploadModal({
+  groqEnabled,
+  groqModel,
   onClose,
   onManualDissected,
   onOpenManualNow,
@@ -61,6 +67,7 @@ export function PdfUploadModal({
   const [subject, setSubject] = useState('Biologia');
   const [gradeNumber, setGradeNumber] = useState(10);
   const [defaultUnlocked, setDefaultUnlocked] = useState(true);
+  const [useGroqAI, setUseGroqAI] = useState(groqEnabled);
 
   // Dissection live state
   const [progress, setProgress] = useState<DissectionProgress>({
@@ -70,6 +77,11 @@ export function PdfUploadModal({
   });
   const [result, setResult] = useState<DissectResult | null>(null);
   const [cloudSaved, setCloudSaved] = useState(false);
+  const [aiInfo, setAiInfo] = useState<{
+    enrichedChapters: number;
+    totalChapters: number;
+    modelUsed: string | null;
+  } | null>(null);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -112,6 +124,7 @@ export function PdfUploadModal({
 
     setPhase('processing');
     setError(null);
+    setAiInfo(null);
 
     try {
       const dissected = await dissectPdfToManual(selectedFile, {
@@ -120,8 +133,32 @@ export function PdfUploadModal({
         gradeNumber,
         defaultUnlocked,
         priceMt: 17,
-        onProgress: (p) => setProgress(p),
+        onProgress: (p) => {
+          // Scale local dissection progress to 0..76% when Groq batch enrichment follows
+          const scaled = useGroqAI && groqEnabled ? Math.min(76, Math.round(p.percent * 0.76)) : Math.min(90, p.percent);
+          setProgress({ ...p, percent: scaled });
+        },
       });
+
+      let finalManual = dissected.manual;
+
+      if (useGroqAI && groqEnabled) {
+        setProgress({
+          stage: 'ai_enriching',
+          percent: 82,
+          detail: `A gerar resumos didáticos e sinónimos de busca em lote com IA Groq (${dissected.manual.chapters.length} capítulos)…`,
+        });
+
+        const enriched = await enrichManualWithCloudAI(dissected.manual);
+        if (enriched && enriched.enrichedChapters > 0) {
+          finalManual = enriched.manual;
+          setAiInfo({
+            enrichedChapters: enriched.enrichedChapters,
+            totalChapters: enriched.totalChapters,
+            modelUsed: enriched.modelUsed,
+          });
+        }
+      }
 
       setProgress({
         stage: 'saving',
@@ -129,9 +166,9 @@ export function PdfUploadModal({
         detail: 'A gravar capítulos no CockroachDB e a encriptar no cofre offline…',
       });
 
-      const persistRes = await onManualDissected(dissected.manual);
+      const persistRes = await onManualDissected(finalManual);
       setCloudSaved(persistRes.cloudSaved);
-      setResult(dissected);
+      setResult({ ...dissected, manual: finalManual });
       setProgress({
         stage: 'done',
         percent: 100,
@@ -145,7 +182,11 @@ export function PdfUploadModal({
     }
   };
 
-  const currentStepIndex = PIPELINE_STEPS.findIndex((s) => s.key === progress.stage);
+  const visibleSteps = useGroqAI && groqEnabled
+    ? PIPELINE_STEPS
+    : PIPELINE_STEPS.filter((s) => s.key !== 'ai_enriching');
+
+  const currentStepIndex = visibleSteps.findIndex((s) => s.key === progress.stage);
 
   return (
     <div
@@ -441,6 +482,32 @@ export function PdfUploadModal({
               </div>
             </div>
 
+            {/* Groq Batch AI Enrichment Toggle */}
+            {groqEnabled && (
+              <label className="flex items-start gap-3 rounded-xl bg-parchment/75 border border-sand-strong p-3.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={useGroqAI}
+                  onChange={(e) => setUseGroqAI(e.target.checked)}
+                  className="mt-1 w-4 h-4 accent-[#083b27] cursor-pointer"
+                />
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[13px] font-extrabold text-ink">
+                      Enriquecer em lote com IA Groq
+                    </span>
+                    <span className="rounded-full bg-amber-soft px-2 py-0.5 text-[10px] font-bold text-ink">
+                      {groqModel || 'Groq IA'}
+                    </span>
+                  </div>
+                  <p className="mt-0.5 text-[11.5px] text-ink-soft leading-snug">
+                    Gera resumos didáticos, pontos-chave de exame e palavras-chave em lote ao
+                    carregar — sem custo de IA durante as pesquisas dos alunos.
+                  </p>
+                </div>
+              </label>
+            )}
+
             <button
               type="submit"
               className="w-full min-h-[52px] rounded-2xl bg-forest hover:bg-forest-hover active:scale-[0.985] text-ivory font-extrabold text-[15px] flex items-center justify-center gap-2 transition-all cursor-pointer shadow-[0_10px_24px_-10px_rgba(8,59,39,0.5)]"
@@ -468,7 +535,7 @@ export function PdfUploadModal({
             </div>
 
             <ul className="space-y-2.5">
-              {PIPELINE_STEPS.map((st, idx) => {
+              {visibleSteps.map((st, idx) => {
                 const done = currentStepIndex > idx || progress.stage === 'done';
                 const active = currentStepIndex === idx;
                 return (
@@ -497,15 +564,23 @@ export function PdfUploadModal({
         {phase === 'done' && result && (
           <div className="mt-5 space-y-4">
             <div className="rounded-2xl bg-forest text-ivory p-4 sm:p-5">
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="inline-flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.11em] text-amber">
                   <CheckCircle2 className="w-4 h-4" aria-hidden="true" />
                   <span>Manual esmiuçado com sucesso</span>
                 </span>
-                <span className="inline-flex items-center gap-1 rounded-full bg-ivory/12 px-2.5 py-0.5 text-[11px] font-semibold">
-                  <Cloud className="w-3 h-3 text-amber" aria-hidden="true" />
-                  {cloudSaved ? 'CockroachDB + Offline' : 'Cofre Offline'}
-                </span>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  {aiInfo && aiInfo.enrichedChapters > 0 && (
+                    <span className="inline-flex items-center gap-1 rounded-full bg-amber text-ink px-2.5 py-0.5 text-[11px] font-extrabold">
+                      <Sparkles className="w-3 h-3" aria-hidden="true" />
+                      Groq IA ({aiInfo.enrichedChapters}/{aiInfo.totalChapters})
+                    </span>
+                  )}
+                  <span className="inline-flex items-center gap-1 rounded-full bg-ivory/12 px-2.5 py-0.5 text-[11px] font-semibold">
+                    <Cloud className="w-3 h-3 text-amber" aria-hidden="true" />
+                    {cloudSaved ? 'CockroachDB + Offline' : 'Cofre Offline'}
+                  </span>
+                </div>
               </div>
 
               <h3 className="mt-2 text-[18px] font-extrabold leading-snug">

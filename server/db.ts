@@ -36,8 +36,17 @@ export async function ensureSchema(): Promise<{ connected: boolean; error?: stri
         file_name TEXT,
         file_size_bytes BIGINT,
         default_unlocked BOOLEAN NOT NULL DEFAULT FALSE,
+        ai_enriched BOOLEAN NOT NULL DEFAULT FALSE,
+        ai_model TEXT,
         created_at TIMESTAMPTZ NOT NULL DEFAULT now()
       );
+    `);
+
+    await pool.query(`
+      ALTER TABLE folio_manuals ADD COLUMN IF NOT EXISTS ai_enriched BOOLEAN NOT NULL DEFAULT FALSE;
+    `);
+    await pool.query(`
+      ALTER TABLE folio_manuals ADD COLUMN IF NOT EXISTS ai_model TEXT;
     `);
 
     await pool.query(`
@@ -56,8 +65,13 @@ export async function ensureSchema(): Promise<{ connected: boolean; error?: stri
         paragraphs JSONB NOT NULL DEFAULT '[]'::jsonb,
         pages JSONB,
         reading_minutes INT NOT NULL DEFAULT 3,
+        summary_source TEXT NOT NULL DEFAULT 'local',
         search_text TEXT NOT NULL DEFAULT ''
       );
+    `);
+
+    await pool.query(`
+      ALTER TABLE folio_chapters ADD COLUMN IF NOT EXISTS summary_source TEXT NOT NULL DEFAULT 'local';
     `);
 
     await pool.query(`

@@ -24,6 +24,7 @@ export interface ManualChapter {
   paragraphs: string[];
   pages?: ManualPage[];
   readingMinutes: number;
+  summarySource?: 'groq' | 'local';
 }
 
 export interface Manual {
@@ -41,6 +42,8 @@ export interface Manual {
   fileName?: string;
   fileSizeBytes?: number;
   defaultUnlocked?: boolean;
+  aiEnriched?: boolean;
+  aiModel?: string;
   createdAt: string;
   chapters: ManualChapter[];
 }
@@ -71,7 +74,7 @@ export interface BookmarkEntry {
 }
 
 export interface DissectionProgress {
-  stage: 'reading' | 'cleaning' | 'structuring' | 'summarizing' | 'saving' | 'done';
+  stage: 'reading' | 'cleaning' | 'structuring' | 'summarizing' | 'ai_enriching' | 'saving' | 'done';
   percent: number;
   currentPage?: number;
   totalPages?: number;

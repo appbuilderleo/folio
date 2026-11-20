@@ -379,7 +379,11 @@ export function OfflineReaderView({
           >
             <span className="inline-flex items-center gap-2 text-[12px] font-bold uppercase tracking-[0.09em]">
               <Sparkles className="w-4 h-4 text-amber" aria-hidden="true" />
-              <span>Resumo de Revisão Rápida</span>
+              <span>
+                {chapter.summarySource === 'groq'
+                  ? 'Resumo de Revisão · IA Groq'
+                  : 'Resumo de Revisão Rápida'}
+              </span>
             </span>
             {summaryOpen ? (
               <ChevronUp className="w-4 h-4 opacity-70" aria-hidden="true" />

@@ -83,7 +83,11 @@ export function EditorialPreviewView({
         >
           <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.1em] text-forest">
             <Sparkles className="w-3.5 h-3.5 text-amber" aria-hidden="true" />
-            <span>Resumo pré-gerado (Grátis)</span>
+            <span>
+              {chapter.summarySource === 'groq'
+                ? 'Resumo IA Groq (Grátis)'
+                : 'Resumo pré-gerado (Grátis)'}
+            </span>
           </div>
           <p className="mt-2 text-[14.5px] leading-[1.6] text-ink">{chapter.summary}</p>
           {chapter.keyTakeaways.length > 0 && (

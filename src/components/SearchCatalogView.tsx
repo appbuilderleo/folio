@@ -7,6 +7,7 @@ import {
   CloudOff,
   FileText,
   FileUp,
+  Loader2,
   Lock,
   Search,
   Sparkles,
@@ -37,6 +38,7 @@ interface SearchCatalogViewProps {
   onOpenManualChapter: (manual: Manual, chapter: ManualChapter, pageNumber?: number) => void;
   onOpenPdfUpload: () => void;
   onDeleteUploadedManual: (manualId: string) => void;
+  onEnrichManualWithAI: (manual: Manual) => Promise<void>;
   onBackToHome: () => void;
 }
 
@@ -78,12 +80,14 @@ export function SearchCatalogView({
   onOpenManualChapter,
   onOpenPdfUpload,
   onDeleteUploadedManual,
+  onEnrichManualWithAI,
   onBackToHome,
 }: SearchCatalogViewProps) {
   const [query, setQuery] = useState(initialQuery);
   const [cycle, setCycle] = useState<SchoolCycle>('all');
   const [onlyUploaded, setOnlyUploaded] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [enrichingManualId, setEnrichingManualId] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -161,11 +165,11 @@ export function SearchCatalogView({
           </button>
 
           <div className="flex items-center gap-2">
-            {/* Subtle CockroachDB / Offline status indicator */}
+            {/* Subtle CockroachDB + Groq IA / Offline status indicator */}
             <span
               title={
                 backendHealth.dbConnected
-                  ? 'Ligado ao CockroachDB + Cofre Offline'
+                  ? `Ligado ao CockroachDB${backendHealth.groqEnabled ? ` + IA Groq (${backendHealth.groqModel})` : ''}`
                   : 'Modo Cofre Offline Local'
               }
               className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-ivory border border-sand px-2.5 py-1 text-[11px] font-semibold text-ink-soft"
@@ -173,7 +177,9 @@ export function SearchCatalogView({
               {backendHealth.dbConnected ? (
                 <>
                   <Cloud className="w-3.5 h-3.5 text-forest" aria-hidden="true" />
-                  <span>CockroachDB</span>
+                  <span>
+                    CockroachDB{backendHealth.groqEnabled ? ' · Groq IA' : ''}
+                  </span>
                 </>
               ) : (
                 <>
@@ -403,7 +409,7 @@ export function SearchCatalogView({
                           {hit.manual.sourceType === 'pdf_upload' && (
                             <span className="inline-flex items-center gap-1 rounded-full bg-forest/10 text-forest px-2 py-0.5 text-[10px] font-bold uppercase tracking-[0.06em]">
                               <Sparkles className="w-2.5 h-2.5" aria-hidden="true" />
-                              PDF Adaptado
+                              {hit.chapter.summarySource === 'groq' ? 'PDF · IA Groq' : 'PDF Adaptado'}
                             </span>
                           )}
                         </div>
@@ -605,13 +611,45 @@ export function SearchCatalogView({
                         ))}
                       </div>
 
-                      <div className="mt-3.5 flex items-center justify-between gap-2">
-                        <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-forest">
-                          <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
-                          <span>
-                            {unlocked ? 'Sincronizado • Offline' : 'Modo Pré-visualização (17 MT)'}
+                      <div className="mt-3.5 flex flex-wrap items-center justify-between gap-2">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-forest">
+                            <CheckCircle2 className="w-3.5 h-3.5" aria-hidden="true" />
+                            <span>
+                              {unlocked ? 'Sincronizado • Offline' : 'Modo Pré-visualização (17 MT)'}
+                            </span>
                           </span>
-                        </span>
+
+                          {manual.sourceType === 'pdf_upload' &&
+                            backendHealth.groqEnabled &&
+                            !manual.aiEnriched && (
+                              <button
+                                type="button"
+                                disabled={enrichingManualId === manual.id}
+                                onClick={async () => {
+                                  setEnrichingManualId(manual.id);
+                                  try {
+                                    await onEnrichManualWithAI(manual);
+                                  } finally {
+                                    setEnrichingManualId(null);
+                                  }
+                                }}
+                                className="inline-flex items-center gap-1 rounded-full bg-amber-soft border border-amber/40 px-2.5 py-1 text-[11px] font-bold text-ink hover:bg-amber/30 transition-colors cursor-pointer disabled:opacity-60"
+                              >
+                                {enrichingManualId === manual.id ? (
+                                  <>
+                                    <Loader2 className="w-3 h-3 animate-spin" aria-hidden="true" />
+                                    <span>A resumir com Groq…</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <Sparkles className="w-3 h-3 text-forest" aria-hidden="true" />
+                                    <span>Melhorar com Groq IA</span>
+                                  </>
+                                )}
+                              </button>
+                            )}
+                        </div>
 
                         {manual.chapters[0] && (
                           <button

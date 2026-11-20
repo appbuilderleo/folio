@@ -13,6 +13,7 @@ import { SEED_MANUALS } from './data/seedManuals';
 import {
   checkBackendHealth,
   deleteManualFromCloud,
+  enrichManualWithCloudAI,
   fetchManualsFromCloud,
   recordUnlockInCloud,
   saveManualToCloud,
@@ -179,6 +180,14 @@ export function App() {
     void deleteManualFromCloud(manualId);
   }, []);
 
+  const handleEnrichManualWithAI = useCallback(async (manual: Manual) => {
+    const res = await enrichManualWithCloudAI(manual);
+    if (!res || res.enrichedChapters === 0) return;
+    setManuals((prev) => mergeManualLists(prev, [res.manual]));
+    await saveManualToOfflineVault(res.manual);
+    void saveManualToCloud(res.manual);
+  }, []);
+
   const handleToggleBookmark = useCallback((entry: BookmarkEntry) => {
     const next = toggleBookmarkEntry(entry);
     setBookmarks(next);
@@ -217,6 +226,7 @@ export function App() {
           onOpenManualChapter={handleOpenManualChapter}
           onOpenPdfUpload={() => setShowPdfStudio(true)}
           onDeleteUploadedManual={handleDeleteUploadedManual}
+          onEnrichManualWithAI={handleEnrichManualWithAI}
           onBackToHome={() => setStage('welcome')}
         />
       )}
@@ -270,6 +280,8 @@ export function App() {
           }
         >
           <PdfUploadModal
+            groqEnabled={Boolean(backendHealth.groqEnabled)}
+            groqModel={backendHealth.groqModel}
             onClose={() => setShowPdfStudio(false)}
             onManualDissected={handleManualDissected}
             onOpenManualNow={(manual) => {
