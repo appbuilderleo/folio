@@ -1,7 +1,6 @@
-import type { Request, Response } from 'express';
-import app from '../server/app';
+import app from './app';
 
-export default function handler(req: Request, res: Response) {
+export default function handler(req: any, res: any) {
   try {
     return app(req, res);
   } catch (err: any) {

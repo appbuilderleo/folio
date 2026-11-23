@@ -8,7 +8,8 @@
     "dev": "concurrently -k -n API,WEB -c green,yellow \"npm run dev:api\" \"npm run dev:web\"",
     "dev:web": "vite",
     "dev:api": "tsx watch server/index.ts",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && npm run build:server",
+    "build:server": "esbuild server/serverless.ts --bundle --platform=node --format=esm --packages=external --outfile=api/index.js",
     "preview": "vite preview",
     "db:init": "tsx server/initDb.ts"
   },
@@ -34,6 +35,7 @@
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^6.3.0",
     "concurrently": "^10.0.7",
+    "esbuild": "^0.28.2",
     "tailwindcss": "^4.3.5",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
