@@ -421,9 +421,7 @@ export function SearchCatalogView({
                   <span className="font-semibold text-ink truncate">{session.user.email}</span>
                   <span className="inline-flex items-center gap-1.5 text-forest font-bold tabular-nums">
                     <Smartphone className="w-3.5 h-3.5" aria-hidden="true" />
-                    <span>
-                      {session.activeSessions}/{session.maxSessions} dispositivos ativos
-                    </span>
+                    <span>1 dispositivo ativo · Sessão única</span>
                   </span>
                 </div>
 

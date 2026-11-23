@@ -10,7 +10,7 @@ Plataforma móvel (Web/PWA) de busca e estudo de **matérias curriculares** do S
   - Painel administrativo isolado em `/admin`, protegido no servidor por `role = 'admin'`, onde o administrador seleciona **Classe**, **Disciplina** e anexa o **PDF** para extração por página e geração automática de resumos de ½ parágrafo via **Groq**.
 - **Autenticação Nativa no CockroachDB (`users`, `user_sessions`, `curricula`, `topics`, `user_unlocks`):**
   - E-mail e senha com `bcryptjs`, exigidos apenas ao desbloquear uma matéria ou aceder a **Minhas Matérias**.
-  - **Anti-partilha:** máximo de **2 dispositivos ativos simultaneamente** (o 3.º início de sessão encerra automaticamente a sessão mais antiga).
+  - **Sessão única por conta (Anti-partilha):** restrita a **1 dispositivo ativo por conta** — iniciar sessão noutro dispositivo encerra automaticamente a sessão anterior e limpa o cache offline desse dispositivo.
 - **Segurança & Performance 3G/4G:**
   - A busca (`GET /api/topics`) entrega apenas metadados leves e resumo de ½ parágrafo, tolerante a acentos e erros ortográficos.
   - O conteúdo completo (`GET /api/curricula/:id/content`) só é entregue após validação de autenticação e desbloqueio em `user_unlocks`, sendo encriptado em **AES-GCM + IndexedDB** para estudo **100% offline**.

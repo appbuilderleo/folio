@@ -52,7 +52,7 @@ export async function ensureSchema(): Promise<{ connected: boolean; error?: stri
       );
     `);
 
-    // 3. user_sessions (Anti-sharing: max 2 concurrent sessions per account)
+    // 3. user_sessions (Strict single-device security: max 1 active session per account)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS user_sessions (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -12,9 +12,12 @@ import {
   fetchProtectedCurriculumContent,
   fetchTopics,
   logoutAccount,
+  subscribeSessionRevoked,
+  verifyActiveSession,
   type MySubjectOverview,
 } from './lib/apiClient';
 import {
+  clearOfflineVaultForUser,
   loadAllOfflineCurriculaForUser,
   loadBookmarks,
   loadCurriculumFromOfflineVault,
@@ -115,6 +118,47 @@ function StudentApp() {
       active = false;
     };
   }, []);
+
+  // 1b. Automatic single-device logout listener + focus/visibility/periodic session verification
+  const activeUserIdRef = useRef<string | null>(null);
+  activeUserIdRef.current = session?.user.id ?? null;
+
+  useEffect(() => {
+    return subscribeSessionRevoked((reason) => {
+      const revokedUserId = activeUserIdRef.current;
+      if (revokedUserId) {
+        void clearOfflineVaultForUser(revokedUserId);
+      }
+      setSession(null);
+      setMySubjects([]);
+      setShowCheckout(false);
+      setReaderState(null);
+      setStage((curr) => (curr === 'reader' || curr === 'preview' ? 'catalog' : curr));
+      if (revokedUserId) {
+        showToast(reason);
+      }
+    });
+  }, [showToast]);
+
+  useEffect(() => {
+    if (!session) return;
+
+    const checkNow = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        void verifyActiveSession();
+      }
+    };
+
+    const interval = window.setInterval(checkNow, 15000);
+    window.addEventListener('focus', checkNow);
+    document.addEventListener('visibilitychange', checkNow);
+
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', checkNow);
+      document.removeEventListener('visibilitychange', checkNow);
+    };
+  }, [session?.token]);
 
   // 2. Fetch lightweight search topics from CockroachDB API (debounced for 3G/4G)
   const reloadTopics = useCallback(
@@ -263,7 +307,7 @@ function StudentApp() {
       setAuthModal((curr) => ({ ...curr, open: false, pendingAction: 'none' }));
 
       if (nextSession.evictedOldSession) {
-        showToast('Sessão iniciada. A sessão mais antiga foi encerrada (limite de 2 dispositivos).');
+        showToast('Sessão iniciada. A sessão no dispositivo anterior foi encerrada automaticamente.');
       }
 
       if (pending === 'checkout' && previewTopic) {
@@ -314,11 +358,15 @@ function StudentApp() {
   );
 
   const handleLogout = useCallback(async () => {
+    const uid = session?.user.id;
     await logoutAccount();
+    if (uid) {
+      void clearOfflineVaultForUser(uid);
+    }
     setSession(null);
     setMySubjects([]);
     showToast('Sessão encerrada com segurança.');
-  }, [showToast]);
+  }, [session?.user.id, showToast]);
 
   const handleToggleBookmark = useCallback((entry: BookmarkEntry) => {
     setBookmarks(toggleBookmarkEntry(entry));

@@ -38,7 +38,11 @@ dotenv.config();
 
 export const app = express();
 
-app.use(cors());
+app.use(
+  cors({
+    exposedHeaders: ['X-Session-Revoked'],
+  })
+);
 app.use(express.json({ limit: '45mb' }));
 
 let schemaInitPromise: Promise<{ connected: boolean; error?: string }> | null = null;
@@ -458,7 +462,16 @@ apiRouter.get('/auth/me', async (req, res) => {
   try {
     const resolved = await resolveUserFromRequest(req);
     if (!resolved) {
-      return res.status(401).json({ error: 'Não autenticado' });
+      const hadBearer = Boolean(req.headers.authorization?.startsWith('Bearer '));
+      if (hadBearer) {
+        res.setHeader('X-Session-Revoked', '1');
+      }
+      return res.status(401).json({
+        error: hadBearer
+          ? 'A tua sessão foi encerrada porque a conta iniciou sessão noutro dispositivo.'
+          : 'Não autenticado',
+        code: hadBearer ? 'SESSION_REVOKED' : 'SESSION_REQUIRED',
+      });
     }
 
     const unlockRes = await pool.query(

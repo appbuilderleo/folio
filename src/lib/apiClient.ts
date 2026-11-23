@@ -13,6 +13,26 @@ import type {
 
 const LS_TOKEN = 'folio_session_token_v1';
 
+type SessionRevokedListener = (reason: string) => void;
+const revokedListeners = new Set<SessionRevokedListener>();
+
+const DEFAULT_REVOKED_MSG =
+  'A tua sessão foi encerrada automaticamente porque iniciaste sessão noutro dispositivo.';
+
+export function subscribeSessionRevoked(listener: SessionRevokedListener): () => void {
+  revokedListeners.add(listener);
+  return () => {
+    revokedListeners.delete(listener);
+  };
+}
+
+function notifySessionRevoked(reason = DEFAULT_REVOKED_MSG): void {
+  setStoredToken(null);
+  for (const listener of revokedListeners) {
+    listener(reason);
+  }
+}
+
 export function getStoredToken(): string | null {
   try {
     return localStorage.getItem(LS_TOKEN);
@@ -47,6 +67,15 @@ async function parseJsonSafe<T>(res: Response): Promise<T & { error?: string; co
   }
 }
 
+function inspectForRevocation(res: Response, hadToken: boolean, serverError?: string): boolean {
+  if (!hadToken) return false;
+  if (res.headers.get('X-Session-Revoked') === '1' || res.status === 401) {
+    notifySessionRevoked(serverError || DEFAULT_REVOKED_MSG);
+    return true;
+  }
+  return false;
+}
+
 export interface MySubjectOverview {
   id: string;
   subject: string;
@@ -72,10 +101,12 @@ export async function fetchTopics(
   if (query.trim()) params.set('q', query.trim());
   if (cycle !== 'all') params.set('cycle', cycle);
 
+  const hadToken = Boolean(getStoredToken());
   const res = await fetch(`/api/topics?${params.toString()}`, {
     headers: authHeaders(),
     signal: AbortSignal.timeout(8000),
   });
+  inspectForRevocation(res, hadToken);
   const data = await parseJsonSafe<{ topics?: TopicSearchItem[]; totalCurricula?: number }>(res);
   if (!res.ok) throw new Error(data.error || 'Não foi possível pesquisar matérias.');
   return {
@@ -98,7 +129,7 @@ export async function fetchCurriculumPreview(curriculumId: string): Promise<Prev
 }
 
 // ============================================================================
-// NATIVE AUTHENTICATION (CockroachDB + Bcrypt + 2-Device Limit)
+// NATIVE AUTHENTICATION (CockroachDB + Bcrypt + Strict 1-Device Session)
 // ============================================================================
 export async function registerAccount(email: string, password: string): Promise<AuthSessionState> {
   const res = await fetch('/api/auth/register', {
@@ -138,16 +169,39 @@ export async function fetchCurrentSession(): Promise<AuthSessionState | null> {
       headers: authHeaders(),
       signal: AbortSignal.timeout(6000),
     });
+    const data = await parseJsonSafe<Omit<AuthSessionState, 'token'>>(res);
     if (res.status === 401) {
-      setStoredToken(null);
+      notifySessionRevoked(data.error || DEFAULT_REVOKED_MSG);
       return null;
     }
-    if (!res.ok) return null;
-    const data = await parseJsonSafe<Omit<AuthSessionState, 'token'>>(res);
-    if (!data.user) return null;
+    if (!res.ok || !data.user) return null;
     return { ...data, token };
   } catch {
     return null;
+  }
+}
+
+/**
+ * Lightweight heartbeat check used while online/visible to auto-logout a previous
+ * device the moment the account logs in elsewhere. Never logs out when offline.
+ */
+export async function verifyActiveSession(): Promise<'valid' | 'revoked' | 'offline'> {
+  const token = getStoredToken();
+  if (!token) return 'revoked';
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return 'offline';
+  try {
+    const res = await fetch('/api/auth/me', {
+      headers: authHeaders(),
+      signal: AbortSignal.timeout(5000),
+    });
+    if (res.status === 401) {
+      const data = await parseJsonSafe<Record<string, unknown>>(res);
+      notifySessionRevoked(data.error || DEFAULT_REVOKED_MSG);
+      return 'revoked';
+    }
+    return res.ok ? 'valid' : 'offline';
+  } catch {
+    return 'offline';
   }
 }
 
@@ -173,6 +227,7 @@ export async function unlockCurriculum(
   provider: PaymentOperator,
   phone: string
 ): Promise<{ receipt: UnlockReceipt; alreadyUnlocked?: boolean }> {
+  const hadToken = Boolean(getStoredToken());
   const res = await fetch('/api/unlocks', {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
@@ -180,6 +235,7 @@ export async function unlockCurriculum(
     signal: AbortSignal.timeout(12000),
   });
   const data = await parseJsonSafe<{ receipt?: UnlockReceipt; alreadyUnlocked?: boolean }>(res);
+  inspectForRevocation(res, hadToken, data.error);
   if (!res.ok || !data.receipt) {
     throw new Error(data.error || 'Não foi possível concluir o pagamento.');
   }
@@ -187,11 +243,13 @@ export async function unlockCurriculum(
 }
 
 export async function fetchMySubjects(): Promise<MySubjectOverview[]> {
+  const hadToken = Boolean(getStoredToken());
   const res = await fetch('/api/my-subjects', {
     headers: authHeaders(),
     signal: AbortSignal.timeout(8000),
   });
   const data = await parseJsonSafe<{ subjects?: MySubjectOverview[] }>(res);
+  inspectForRevocation(res, hadToken, data.error);
   if (!res.ok) {
     throw new Error(data.error || 'Não foi possível carregar as tuas matérias.');
   }
@@ -201,11 +259,13 @@ export async function fetchMySubjects(): Promise<MySubjectOverview[]> {
 export async function fetchProtectedCurriculumContent(
   curriculumId: string
 ): Promise<UnlockedCurriculum> {
+  const hadToken = Boolean(getStoredToken());
   const res = await fetch(`/api/curricula/${encodeURIComponent(curriculumId)}/content`, {
     headers: authHeaders(),
     signal: AbortSignal.timeout(12000),
   });
   const data = await parseJsonSafe<{ curriculum?: UnlockedCurriculum }>(res);
+  inspectForRevocation(res, hadToken, data.error);
   if (!res.ok || !data.curriculum) {
     throw new Error(data.error || 'Sem acesso a este conteúdo curricular.');
   }
@@ -219,6 +279,7 @@ export async function fetchAdminDashboard(): Promise<{
   curricula: AdminCurriculumOverview[];
   stats: AdminDashboardStats;
 }> {
+  const hadToken = Boolean(getStoredToken());
   const res = await fetch('/api/admin/curricula', {
     headers: authHeaders(),
     signal: AbortSignal.timeout(10000),
@@ -227,6 +288,7 @@ export async function fetchAdminDashboard(): Promise<{
     curricula?: AdminCurriculumOverview[];
     stats?: AdminDashboardStats;
   }>(res);
+  inspectForRevocation(res, hadToken, data.error);
   if (!res.ok || !data.stats) {
     throw new Error(data.error || 'Acesso administrativo negado.');
   }
@@ -251,6 +313,7 @@ export async function publishAdminCurriculum(payload: {
   groqModel?: string | null;
   warnings?: string[];
 }> {
+  const hadToken = Boolean(getStoredToken());
   const res = await fetch('/api/admin/curricula', {
     method: 'POST',
     headers: authHeaders({ 'Content-Type': 'application/json' }),
@@ -267,6 +330,7 @@ export async function publishAdminCurriculum(payload: {
     groqModel?: string | null;
     warnings?: string[];
   }>(res);
+  inspectForRevocation(res, hadToken, data.error);
   if (!res.ok || !data.published) {
     throw new Error(data.error || 'Erro ao publicar matéria curricular.');
   }
@@ -278,6 +342,7 @@ export async function reEnrichAdminCurriculum(curriculumId: string): Promise<{
   totalCount: number;
   modelUsed?: string | null;
 }> {
+  const hadToken = Boolean(getStoredToken());
   const res = await fetch(`/api/admin/curricula/${encodeURIComponent(curriculumId)}/enrich`, {
     method: 'POST',
     headers: authHeaders(),
@@ -288,6 +353,7 @@ export async function reEnrichAdminCurriculum(curriculumId: string): Promise<{
     totalCount: number;
     modelUsed?: string | null;
   }>(res);
+  inspectForRevocation(res, hadToken, data.error);
   if (!res.ok) {
     throw new Error(data.error || 'Erro ao reprocessar resumos com Groq.');
   }
@@ -295,6 +361,7 @@ export async function reEnrichAdminCurriculum(curriculumId: string): Promise<{
 }
 
 export async function deleteAdminCurriculum(curriculumId: string): Promise<void> {
+  const hadToken = Boolean(getStoredToken());
   const res = await fetch(`/api/admin/curricula/${encodeURIComponent(curriculumId)}`, {
     method: 'DELETE',
     headers: authHeaders(),
@@ -302,6 +369,7 @@ export async function deleteAdminCurriculum(curriculumId: string): Promise<void>
   });
   if (!res.ok) {
     const data = await parseJsonSafe<Record<string, unknown>>(res);
+    inspectForRevocation(res, hadToken, data.error);
     throw new Error(data.error || 'Erro ao remover matéria.');
   }
 }

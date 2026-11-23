@@ -4,7 +4,7 @@ import type { NextFunction, Request, Response } from 'express';
 import { pool } from './db';
 import type { UserProfile, UserRole } from '../src/types/folio';
 
-export const MAX_CONCURRENT_SESSIONS = 2;
+export const MAX_CONCURRENT_SESSIONS = 1;
 const SESSION_TTL_DAYS = 30;
 
 export interface AuthenticatedRequest extends Request {
@@ -44,9 +44,9 @@ export async function verifyPassword(plain: string, hash: string): Promise<boole
 }
 
 /**
- * Creates a new session in CockroachDB and enforces the anti-sharing rule:
- * Maximum 2 active concurrent devices per user — automatically evicts the oldest
- * active session when a 3rd device signs in.
+ * Creates a new session in CockroachDB and enforces strict single-device security:
+ * Maximum 1 active device per account — logging in on a new device automatically
+ * revokes all previous sessions for that account.
  */
 export async function createSessionWithDeviceLimit(
   userId: string,
@@ -68,7 +68,7 @@ export async function createSessionWithDeviceLimit(
       [userId]
     );
 
-    // Fetch current active sessions ordered newest first
+    // Check active sessions and revoke any exceeding MAX_CONCURRENT_SESSIONS - 1 (all previous when limit is 1)
     const activeRes = await client.query(
       `
       SELECT id
@@ -81,10 +81,8 @@ export async function createSessionWithDeviceLimit(
 
     let evictedOldSession = false;
     if (activeRes.rows.length >= MAX_CONCURRENT_SESSIONS) {
-      // Keep only the newest (MAX_CONCURRENT_SESSIONS - 1) sessions and revoke older ones
-      const toEvict = activeRes.rows
-        .slice(MAX_CONCURRENT_SESSIONS - 1)
-        .map((r) => String(r.id));
+      const keepCount = Math.max(0, MAX_CONCURRENT_SESSIONS - 1);
+      const toEvict = activeRes.rows.slice(keepCount).map((r) => String(r.id));
       if (toEvict.length > 0) {
         await client.query(`DELETE FROM user_sessions WHERE id = ANY($1::uuid[])`, [toEvict]);
         evictedOldSession = true;
@@ -173,14 +171,18 @@ export async function resolveUserFromRequest(
 
 export async function attachOptionalAuth(
   req: AuthenticatedRequest,
-  _res: Response,
+  res: Response,
   next: NextFunction
 ): Promise<void> {
   try {
+    const suppliedToken = extractBearerToken(req);
     const resolved = await resolveUserFromRequest(req);
     if (resolved) {
       req.authUser = resolved.user;
       req.authSessionId = resolved.sessionId;
+    } else if (suppliedToken) {
+      // Signal the previous device immediately so it auto-logs out even on public requests
+      res.setHeader('X-Session-Revoked', '1');
     }
   } catch {
     // ignore optional auth failure
@@ -194,11 +196,17 @@ export async function requireAuth(
   next: NextFunction
 ): Promise<void> {
   try {
+    const suppliedToken = extractBearerToken(req);
     const resolved = await resolveUserFromRequest(req);
     if (!resolved) {
+      if (suppliedToken) {
+        res.setHeader('X-Session-Revoked', '1');
+      }
       res.status(401).json({
-        error: 'Sessão inválida ou encerrada noutro dispositivo. Inicia sessão novamente.',
-        code: 'SESSION_REQUIRED',
+        error: suppliedToken
+          ? 'A tua sessão foi encerrada porque a conta iniciou sessão noutro dispositivo.'
+          : 'Inicia sessão para continuar.',
+        code: suppliedToken ? 'SESSION_REVOKED' : 'SESSION_REQUIRED',
       });
       return;
     }

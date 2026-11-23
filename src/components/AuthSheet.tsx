@@ -140,7 +140,7 @@ export function AuthCardContent({ reason, onSuccess, defaultMode = 'register' }:
 
         <p className="pt-1 text-[11.5px] text-center text-ink-muted flex items-center justify-center gap-1.5 leading-snug">
           <ShieldCheck className="w-3.5 h-3.5 text-forest shrink-0" aria-hidden="true" />
-          <span>As tuas matérias ficam guardadas na conta (até 2 dispositivos ativos).</span>
+          <span>1 dispositivo ativo por conta (novo login encerra o dispositivo anterior).</span>
         </p>
       </form>
     </div>

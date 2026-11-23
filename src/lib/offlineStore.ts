@@ -179,6 +179,29 @@ export async function loadAllOfflineCurriculaForUser(
   }
 }
 
+export async function clearOfflineVaultForUser(userId: string): Promise<void> {
+  try {
+    const db = await openVaultDb();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(STORE_CURRICULA, 'readwrite');
+      const store = tx.objectStore(STORE_CURRICULA);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const rows = (req.result as EncryptedRecord[]) || [];
+        for (const row of rows) {
+          if (row.userId === userId) {
+            store.delete(row.vaultKey);
+          }
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+  } catch {
+    // ignore cleanup errors
+  }
+}
+
 export function loadBookmarks(): BookmarkEntry[] {
   try {
     const raw = localStorage.getItem(LS_BOOKMARKS);

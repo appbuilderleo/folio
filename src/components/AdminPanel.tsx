@@ -22,6 +22,8 @@ import {
   logoutAccount,
   publishAdminCurriculum,
   reEnrichAdminCurriculum,
+  subscribeSessionRevoked,
+  verifyActiveSession,
 } from '../lib/apiClient';
 import {
   AVAILABLE_SUBJECTS,
@@ -101,6 +103,33 @@ export function AdminPanel() {
       active = false;
     };
   }, [loadDashboard]);
+
+  // Auto-logout admin if the admin account signs in on another device
+  useEffect(() => {
+    return subscribeSessionRevoked((reason) => {
+      setSession(null);
+      setCurricula([]);
+      setStats(null);
+      setLoginError(reason);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!session || session.user.role !== 'admin') return;
+    const checkNow = () => {
+      if (document.visibilityState === 'visible' && navigator.onLine) {
+        void verifyActiveSession();
+      }
+    };
+    const interval = window.setInterval(checkNow, 15000);
+    window.addEventListener('focus', checkNow);
+    document.addEventListener('visibilitychange', checkNow);
+    return () => {
+      window.clearInterval(interval);
+      window.removeEventListener('focus', checkNow);
+      document.removeEventListener('visibilitychange', checkNow);
+    };
+  }, [session?.token, session?.user.role]);
 
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
