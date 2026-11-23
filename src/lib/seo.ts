@@ -30,19 +30,11 @@ export const SEO_LIMITS = {
 } as const;
 
 export function getSiteUrl(): string {
-  // Server-side Node / Vercel env
-  const nodeEnv =
-    typeof process !== 'undefined' && process.env
-      ? process.env.SITE_URL || process.env.VITE_SITE_URL
-      : undefined;
-  // Client-side Vite env
-  const viteEnv =
-    typeof import.meta !== 'undefined' &&
-    typeof (import.meta as { env?: Record<string, string | undefined> }).env === 'object'
-      ? (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_SITE_URL
-      : undefined;
-
-  const raw = (nodeEnv || viteEnv || DEFAULT_SITE_URL).trim();
+  let envUrl: string | undefined;
+  if (typeof process !== 'undefined' && process.env) {
+    envUrl = process.env.SITE_URL || process.env.VITE_SITE_URL;
+  }
+  const raw = (envUrl || DEFAULT_SITE_URL).trim();
   return raw.replace(/\/+$/, '') || DEFAULT_SITE_URL;
 }
 

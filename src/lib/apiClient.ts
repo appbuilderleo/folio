@@ -101,11 +101,42 @@ async function resilientFetch(
   throw new Error('Sem ligação ao servidor neste momento. Verifica a internet e tenta novamente.');
 }
 
+export function humanizeHttpStatusMessage(status: number): string {
+  switch (status) {
+    case 400:
+      return 'Dados do pedido inválidos ou incompletos (400).';
+    case 401:
+      return 'E-mail ou senha incorretos.';
+    case 403:
+      return 'Acesso não autorizado para esta conta (403).';
+    case 404:
+      return 'Serviço ou recurso não encontrado (404).';
+    case 409:
+      return 'Já existe uma conta com este e-mail.';
+    case 429:
+      return 'Muitos pedidos seguidos. Aguarda alguns segundos antes de tentar novamente.';
+    case 500:
+      return 'O servidor encontrou um problema interno temporário (500). Tenta novamente dentro de instantes.';
+    case 502:
+      return 'Serviço temporariamente indisponível (502). Tenta novamente em alguns instantes.';
+    case 503:
+      return 'Base de dados ou servidor indisponível (503). O serviço pode estar a inicializar; tenta novamente.';
+    case 504:
+      return 'O servidor demorou a responder (504 Timeout). Verifica a tua ligação e tenta novamente.';
+    default:
+      return `Não foi possível comunicar com o servidor (${status}). Tenta novamente.`;
+  }
+}
+
 async function parseJsonSafe<T>(res: Response): Promise<T & { error?: string; code?: string }> {
   try {
-    return (await res.json()) as T & { error?: string; code?: string };
+    const data = (await res.json()) as T & { error?: string; code?: string };
+    if (!res.ok && !data.error) {
+      data.error = humanizeHttpStatusMessage(res.status);
+    }
+    return data;
   } catch {
-    return { error: `Erro de comunicação (${res.status})` } as T & { error?: string; code?: string };
+    return { error: humanizeHttpStatusMessage(res.status) } as T & { error?: string; code?: string };
   }
 }
 

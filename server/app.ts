@@ -1130,4 +1130,22 @@ app.use('/', createSeoRouter(ensureDbReady));
 app.use('/api', apiRouter);
 app.use('/', apiRouter);
 
+// Global JSON error handler — guarantees client ALWAYS receives structured JSON error instead of HTML 500
+app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[Fólio Server Error]:', err);
+  if (res.headersSent) return;
+
+  const status = typeof err?.status === 'number' ? err.status : 500;
+  let message = err?.message || 'Erro interno no servidor ao processar o pedido.';
+  if (err instanceof SyntaxError && 'body' in err) {
+    message = 'Formato de dados JSON inválido no pedido.';
+  }
+
+  res.setHeader('Content-Type', 'application/json; charset=utf-8');
+  return res.status(status).json({
+    error: message,
+    code: err?.code || 'SERVER_ERROR',
+  });
+});
+
 export default app;

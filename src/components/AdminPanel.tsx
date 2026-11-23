@@ -320,10 +320,15 @@ export function AdminPanel() {
           {loginError && (
             <div
               role="alert"
-              className="mt-4 rounded-xl bg-red-50 border border-red-200 px-3.5 py-2.5 flex items-start gap-2 text-[12.5px] font-medium text-red-800"
+              className="mt-4 rounded-xl bg-red-50 border border-red-200 px-3.5 py-3 flex items-start gap-2.5 text-[13px] font-medium text-red-900 leading-snug"
             >
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
-              <span>{loginError}</span>
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-600" aria-hidden="true" />
+              <div className="flex-1">
+                <p className="font-bold text-[12.5px] uppercase tracking-[0.04em] text-red-800 mb-0.5">
+                  Não foi possível entrar
+                </p>
+                <p>{loginError}</p>
+              </div>
             </div>
           )}
 

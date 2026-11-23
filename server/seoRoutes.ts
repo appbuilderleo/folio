@@ -10,7 +10,7 @@ import {
   sanitizePublicSeoCopy,
   SITE_NAME,
   toCanonicalUrl,
-} from '../src/lib/seo';
+} from './seoUtils';
 import { pool } from './db';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
