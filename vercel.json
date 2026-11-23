@@ -7,13 +7,89 @@
       "maxDuration": 60
     }
   },
+  "headers": [
+    {
+      "source": "/admin",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/admin/(.*)",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/api/(.*)",
+      "headers": [
+        {
+          "key": "X-Robots-Tag",
+          "value": "noindex, nofollow"
+        }
+      ]
+    },
+    {
+      "source": "/og-folio.png",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/assets/(.*)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=31536000, immutable"
+        }
+      ]
+    },
+    {
+      "source": "/(robots\\.txt|llms\\.txt|manifest\\.webmanifest)",
+      "headers": [
+        {
+          "key": "Cache-Control",
+          "value": "public, max-age=3600"
+        }
+      ]
+    }
+  ],
   "rewrites": [
     {
       "source": "/api/(.*)",
       "destination": "/api"
     },
     {
-      "source": "/((?!api/|assets/).*)",
+      "source": "/sitemap.xml",
+      "destination": "/api"
+    },
+    {
+      "source": "/materias",
+      "destination": "/api"
+    },
+    {
+      "source": "/materias/",
+      "destination": "/api"
+    },
+    {
+      "source": "/tema/(.*)",
+      "destination": "/api"
+    },
+    {
+      "source": "/((?!robots\\.txt$|llms\\.txt$)[A-Za-z0-9-]{8,128}\\.txt)",
+      "destination": "/api"
+    },
+    {
+      "source": "/((?!api/|assets/|sitemap\\.xml|materias|tema/|robots\\.txt|llms\\.txt|manifest\\.webmanifest|og-folio\\.png).*)",
       "destination": "/index.html"
     }
   ]

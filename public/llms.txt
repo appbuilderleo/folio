@@ -1,0 +1,21 @@
+# Fólio
+
+> A página certa para cada dúvida. Motor de pesquisa curricular e leitura didática offline para o Sistema Nacional de Educação (SNE) de Moçambique, da 1.ª à 12.ª classe.
+
+## O que é o Fólio
+O Fólio ajuda estudantes, encarregados de educação e explicadores em Moçambique a encontrar rapidamente qualquer tema escolar, consultar um resumo gratuito de meio parágrafo, verificar o número exato da página e estudar a disciplina inteira 100% offline no telemóvel.
+
+## Como funciona
+- **Pesquisa gratuita sem conta:** Qualquer estudante pode pesquisar por tema, disciplina ou ciclo escolar (1.ª–6.ª, 7.ª–9.ª e 10.ª–12.ª classe), ler o resumo de meio parágrafo e pré-visualizar os primeiros parágrafos da página exata sem criar conta.
+- **Taxa única transparente (17 MT):** Para desbloquear a disciplina completa da classe escolhida e estudar 100% offline (com modos Papel, Sépia e Noite, ajuste de letra e esquemas ilustrativos), aplica-se uma taxa única de sincronização de 17 MT paga via M-Pesa ou e-Mola.
+- **Acesso protegido na conta:** As matérias desbloqueadas ficam associadas à conta do estudante (sessão segura de 1 dispositivo ativo) e armazenadas localmente de forma encriptada para estudo sem internet.
+
+## Ciclos e disciplinas cobertas
+- **Ensino Primário (1.ª à 6.ª Classe):** Língua Portuguesa, Matemática, Ciências Naturais, Ciências Sociais.
+- **1.º Ciclo do Ensino Secundário (7.ª à 9.ª Classe):** Matemática, Física, Química, Biologia, História, Geografia, Português, Inglês.
+- **2.º Ciclo do Ensino Secundário (10.ª à 12.ª Classe):** Biologia, Física, Química, Matemática, História, Geografia, Português, Filosofia.
+
+## Páginas públicas principais
+- [Página Inicial do Fólio](https://folio-one-snowy.vercel.app/)
+- [Índice Completo de Matérias (1.ª–12.ª Classe)](https://folio-one-snowy.vercel.app/materias)
+- [Mapa do Site XML](https://folio-one-snowy.vercel.app/sitemap.xml)

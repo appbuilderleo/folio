@@ -11,6 +11,18 @@ export default defineConfig({
         target: 'http://127.0.0.1:3001',
         changeOrigin: true,
       },
+      '/sitemap.xml': {
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true,
+      },
+      '/materias': {
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true,
+      },
+      '/tema': {
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true,
+      },
     },
   },
   optimizeDeps: {

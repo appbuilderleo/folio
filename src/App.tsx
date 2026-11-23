@@ -24,6 +24,11 @@ import {
   saveCurriculumToOfflineVault,
   toggleBookmarkEntry,
 } from './lib/offlineStore';
+import {
+  applyDocumentSeo,
+  DEFAULT_DESCRIPTION,
+  DEFAULT_TITLE,
+} from './lib/seo';
 import type {
   AuthSessionState,
   BookmarkEntry,
@@ -41,6 +46,65 @@ const AdminPanel = lazy(() =>
 
 type Stage = 'splash' | 'welcome' | 'catalog' | 'preview' | 'reader';
 
+function readInitialDeepLink(): {
+  skipSplash: boolean;
+  initialStage: Stage;
+  initialQuery: string;
+  targetTopicId: string | null;
+} {
+  if (typeof window === 'undefined') {
+    return { skipSplash: false, initialStage: 'splash', initialQuery: '', targetTopicId: null };
+  }
+
+  const hash = window.location.hash || '';
+  const params = new URLSearchParams(window.location.search);
+  const queryParam = (params.get('q') || '').trim();
+  const temaParam = (params.get('tema') || '').trim();
+  const hashTemaMatch = hash.match(/^#tema=([0-9a-f-]{36})$/i);
+  const targetTopicId = hashTemaMatch?.[1] || (temaParam || null);
+
+  if (targetTopicId) {
+    return { skipSplash: true, initialStage: 'catalog', initialQuery: '', targetTopicId };
+  }
+  if (queryParam || hash === '#pesquisar') {
+    return { skipSplash: true, initialStage: 'catalog', initialQuery: queryParam, targetTopicId: null };
+  }
+
+  const ua = navigator.userAgent || '';
+  const isCrawler = /bot|crawler|spider|openseo|google|bing|perplexity|claude|chatgpt|lighthouse|headless/i.test(
+    ua
+  );
+  if (isCrawler) {
+    return { skipSplash: true, initialStage: 'welcome', initialQuery: '', targetTopicId: null };
+  }
+
+  return { skipSplash: false, initialStage: 'splash', initialQuery: '', targetTopicId: null };
+}
+
+function AdminRouteShell() {
+  useEffect(() => {
+    applyDocumentSeo({
+      title: 'Administração Curricular — Fólio',
+      description:
+        'Área interna de gestão curricular do Fólio protegida por autenticação administrativa.',
+      canonicalPath: '/admin',
+      robots: 'noindex, nofollow',
+    });
+  }, []);
+
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-dvh flex items-center justify-center bg-parchment text-[14px] font-bold text-forest">
+          A abrir painel administrativo…
+        </div>
+      }
+    >
+      <AdminPanel />
+    </Suspense>
+  );
+}
+
 export function App() {
   // Isolated route check for /admin (invisible from public UI)
   const isAdminRoute =
@@ -48,32 +112,24 @@ export function App() {
     window.location.pathname.replace(/\/+$/, '') === '/admin';
 
   if (isAdminRoute) {
-    return (
-      <Suspense
-        fallback={
-          <div className="min-h-dvh flex items-center justify-center bg-parchment text-[14px] font-bold text-forest">
-            A abrir painel administrativo…
-          </div>
-        }
-      >
-        <AdminPanel />
-      </Suspense>
-    );
+    return <AdminRouteShell />;
   }
 
   return <StudentApp />;
 }
 
 function StudentApp() {
-  const [stage, setStage] = useState<Stage>('splash');
+  const initialDeep = useRef(readInitialDeepLink());
+  const [stage, setStage] = useState<Stage>(initialDeep.current.initialStage);
   const [catalogTab, setCatalogTab] = useState<'search' | 'library'>('search');
 
   // Lightweight search state (3G/4G friendly)
-  const [query, setQuery] = useState('');
+  const [query, setQuery] = useState(initialDeep.current.initialQuery);
   const [cycle, setCycle] = useState<SchoolCycle>('all');
   const [topics, setTopics] = useState<TopicSearchItem[]>([]);
   const [totalCurricula, setTotalCurricula] = useState(0);
   const [loadingTopics, setLoadingTopics] = useState(true);
+  const handledDeepTopicRef = useRef(false);
 
   // Auth & Minhas Matérias
   const [session, setSession] = useState<AuthSessionState | null>(null);
@@ -165,7 +221,8 @@ function StudentApp() {
     async (qVal: string, cycleVal: SchoolCycle) => {
       setLoadingTopics(true);
       try {
-        const res = await fetchTopics(qVal, cycleVal);
+        const focusId = !handledDeepTopicRef.current ? initialDeep.current.targetTopicId : null;
+        const res = await fetchTopics(qVal, cycleVal, focusId);
         setTopics(res.topics);
         setTotalCurricula(res.totalCurricula);
       } catch {
@@ -283,6 +340,54 @@ function StudentApp() {
     },
     [session, openUnlockedCurriculum]
   );
+
+  // Open deep-linked topic from SSR /tema/:id ("Abrir no Fólio") as soon as topics arrive
+  useEffect(() => {
+    const targetId = initialDeep.current.targetTopicId;
+    if (!targetId || handledDeepTopicRef.current || loadingTopics || topics.length === 0) {
+      return;
+    }
+    const found = topics.find((t) => t.id === targetId);
+    if (found) {
+      handledDeepTopicRef.current = true;
+      handleSelectTopic(found);
+    }
+  }, [topics, loadingTopics, handleSelectTopic]);
+
+  // Keep document <title>, <meta description>, canonical & OG tags synchronized with active view
+  useEffect(() => {
+    if (stage === 'reader' && readerState) {
+      applyDocumentSeo({
+        title: `${readerState.topic.title} · ${readerState.curriculum.subject} ${readerState.curriculum.gradeNumber}.ª`,
+        description: `${readerState.curriculum.subject} (${readerState.curriculum.grade}, Pág. ${readerState.topic.pageNumber}) — ${readerState.topic.summaryHalfParagraph}`,
+        canonicalPath: `/tema/${readerState.topic.id}`,
+        ogType: 'article',
+      });
+      return;
+    }
+    if (stage === 'preview' && previewTopic) {
+      applyDocumentSeo({
+        title: `${previewTopic.title} · ${previewTopic.subject} ${previewTopic.gradeNumber}.ª P.${previewTopic.pageNumber}`,
+        description: `${previewTopic.subject} (${previewTopic.grade}, Pág. ${previewTopic.pageNumber}) — ${previewTopic.summaryHalfParagraph}`,
+        canonicalPath: `/tema/${previewTopic.id}`,
+        ogType: 'article',
+      });
+      return;
+    }
+    if (stage === 'catalog' && query.trim()) {
+      applyDocumentSeo({
+        title: `${query.trim()} — Pesquisa Escolar · Fólio`,
+        description: `Resultados de matérias escolares para “${query.trim()}” da 1.ª à 12.ª classe em Moçambique. Lê o resumo grátis e vai direto à página exata.`,
+        canonicalPath: '/',
+      });
+      return;
+    }
+    applyDocumentSeo({
+      title: DEFAULT_TITLE,
+      description: DEFAULT_DESCRIPTION,
+      canonicalPath: '/',
+    });
+  }, [stage, query, previewTopic, readerState]);
 
   // Clicking "Desbloquear Matéria Completa — 17 MT": Auth gate first if visitor, else straight to M-Pesa/e-Mola!
   const handleRequestUnlock = useCallback(() => {

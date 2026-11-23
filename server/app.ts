@@ -23,6 +23,7 @@ import {
   isGroqConfigured,
 } from './groqService';
 import { processMobilePayment } from './paymentService';
+import { createSeoRouter, invalidateSeoCache, notifyIndexNow } from './seoRoutes';
 import type {
   AdminCurriculumOverview,
   AdminTopicDraft,
@@ -170,6 +171,12 @@ function getDeviceLabel(req: express.Request): string {
 
 const apiRouter = Router();
 
+// Keep all JSON API endpoints strictly out of search engine indexes
+apiRouter.use((_req, res, next) => {
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  next();
+});
+
 // ============================================================================
 // 1. HEALTH CHECK (Minimal public metadata)
 // ============================================================================
@@ -192,6 +199,7 @@ apiRouter.get('/topics', attachOptionalAuth, async (req: AuthenticatedRequest, r
 
   const rawQ = String(req.query.q || '').trim();
   const cycle = String(req.query.cycle || 'all').trim();
+  const focusTopicId = String(req.query.topicId || '').trim();
   const queryNorm = normalizeSearchText(rawQ);
 
   try {
@@ -257,7 +265,10 @@ apiRouter.get('/topics', attachOptionalAuth, async (req: AuthenticatedRequest, r
       const summaryNorm = normalizeSearchText(String(r.summary_half_paragraph));
       const searchNorm = String(r.search_normalized || '');
 
-      const score = scoreTopicQuery(queryNorm, titleNorm, subjGradeNorm, summaryNorm, searchNorm);
+      let score = scoreTopicQuery(queryNorm, titleNorm, subjGradeNorm, summaryNorm, searchNorm);
+      if (focusTopicId && String(r.id) === focusTopicId) {
+        score += 1000;
+      }
       if (queryNorm && score < 8) continue;
 
       const takeaways = Array.isArray(r.key_takeaways) ? (r.key_takeaways as string[]) : [];
@@ -917,6 +928,7 @@ apiRouter.post('/admin/curricula', requireAdmin, async (req, res) => {
     const aiResult = await enrichTopicsWithGroq({ subject, grade }, rawTopics);
 
     // Step 3: Insert all indexed topics atomically & set status = 'published'
+    const insertedTopicIds: string[] = [];
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -939,13 +951,14 @@ apiRouter.post('/admin/curricula', requireAdmin, async (req, res) => {
           ].join(' ')
         );
 
-        await client.query(
+        const insRes = await client.query(
           `
           INSERT INTO topics (
             curriculum_id, topic_order, unit_label, title, page_number, page_end,
             summary_half_paragraph, preview_paragraphs, key_takeaways, keywords,
             full_text, pages, visuals, visuals_count, reading_minutes, search_normalized
           ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13::jsonb,$14,$15,$16)
+          RETURNING id
           `,
           [
             curriculumId,
@@ -966,6 +979,9 @@ apiRouter.post('/admin/curricula', requireAdmin, async (req, res) => {
             searchNorm,
           ]
         );
+        if (insRes.rows[0]?.id) {
+          insertedTopicIds.push(String(insRes.rows[0].id));
+        }
       }
 
       await client.query(`UPDATE curricula SET status = 'published' WHERE id = $1`, [curriculumId]);
@@ -977,6 +993,13 @@ apiRouter.post('/admin/curricula', requireAdmin, async (req, res) => {
     } finally {
       client.release();
     }
+
+    invalidateSeoCache();
+    void notifyIndexNow([
+      '/',
+      '/materias',
+      ...insertedTopicIds.map((id) => `/tema/${id}`),
+    ]);
 
     return res.status(201).json({
       published: true,
@@ -1071,6 +1094,8 @@ apiRouter.post('/admin/curricula/:id/enrich', requireAdmin, async (req, res) => 
       );
     }
 
+    invalidateSeoCache();
+
     return res.json({
       enrichedCount: aiResult.enrichedCount,
       totalCount: aiResult.totalCount,
@@ -1090,12 +1115,16 @@ apiRouter.delete('/admin/curricula/:id', requireAdmin, async (req, res) => {
   }
   try {
     await pool.query(`DELETE FROM curricula WHERE id = $1`, [req.params.id]);
+    invalidateSeoCache();
     return res.json({ deleted: true });
   } catch (err) {
     console.error('[DELETE /api/admin/curricula/:id]', err);
     return res.status(500).json({ error: 'Erro ao remover matéria curricular.' });
   }
 });
+
+// Mount public SEO SSR routes (/sitemap.xml, /materias, /tema/:id, IndexNow) BEFORE apiRouter
+app.use('/', createSeoRouter(ensureDbReady));
 
 // Mount under both /api and / so local Express AND Vercel serverless rewrites both work seamlessly
 app.use('/api', apiRouter);

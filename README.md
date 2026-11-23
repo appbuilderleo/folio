@@ -23,6 +23,15 @@ Configure em `.env` (local) e em **Vercel → Project Settings → Environment V
 - `GROQ_API_KEY` — chave da API da Groq para resumos em lote no `/admin`
 - `ADMIN_EMAIL` — e-mail da conta administrativa inicial
 - `ADMIN_PASSWORD` — senha forte da conta administrativa inicial
+- `SITE_URL` / `VITE_SITE_URL` *(opcional)* — URL canónica pública (padrão: `https://folio-one-snowy.vercel.app`)
+- `INDEXNOW_KEY` *(opcional)* — chave IndexNow (8–128 caracteres) para notificação automática ao publicar novas matérias
+
+## Otimização SEO & AI Search Visibility (baseada em OpenSEO)
+
+- **Páginas SSR indexáveis sem expor conteúdo pago:** `/materias` (diretório público por ciclo/disciplina) e `/tema/:id` (pré-visualização pública com resumo grátis de ½ parágrafo + 2 parágrafos de excerto, sem nunca expor `full_text` ou `visuals` bloqueados).
+- **Descoberta & Crawlers:** `/sitemap.xml` dinâmico ligado ao CockroachDB, `/robots.txt` compatível com Googlebot, Bingbot, OAI-SearchBot, PerplexityBot, ClaudeBot e OpenSEO-Audit, e `/llms.txt` para citação rigorosa em motores de IA.
+- **Proteção de rotas internas:** `/admin` e `/api/*` excluídos de `sitemap.xml`, bloqueados em `robots.txt` e servidos com `X-Robots-Tag: noindex, nofollow`.
+- **Metadados & Dados Estruturados:** títulos únicos (`≤ 60` caracteres), descrições únicas (`70–160` caracteres), canonical próprio, cartão OpenGraph/Twitter `1200×630` (`/og-folio.png`) e JSON-LD (`Organization`, `WebSite`/`SearchAction`, `WebApplication`, `FAQPage`, `CollectionPage`, `LearningResource` e `BreadcrumbList`).
 
 ## Comandos
 

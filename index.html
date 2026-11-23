@@ -4,16 +4,137 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
     <meta name="theme-color" content="#f3ebd6" />
-    <title>Fólio — A página certa para cada dúvida</title>
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <title>Fólio — Matérias Escolares de Moçambique (1.ª–12.ª)</title>
     <meta
       name="description"
-      content="Matérias escolares organizadas da 1.ª à 12.ª classe em Moçambique. Lê o resumo grátis, vai direto à página exata e estuda offline."
+      content="Pesquisa matérias escolares da 1.ª à 12.ª classe em Moçambique. Lê o resumo grátis, vai direto à página exata e estuda 100% offline por 17 MT."
     />
+    <link rel="canonical" href="https://folio-one-snowy.vercel.app/" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/assets/folio-symbol.png" />
     <link
       rel="icon"
       type="image/svg+xml"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23f3ebd6'/%3E%3Cpath d='M8 17c10-2 19 1 24 8 5-7 14-10 24-8v31c-10-2-19 1-24 8-5-7-14-10-24-8V17z' fill='%23041a11'/%3E%3Cpath d='M12 14c8-2 15 1 19 7v27c-4-5-11-8-19-6V14z' fill='%23083b27'/%3E%3Cpath d='M52 14c-8-2-15 1-19 7v27c4-5 11-8 19-6V14z' fill='%23083b27'/%3E%3Cpath d='M42 13.5l7-.5v19l-3.5-4.5L42 32V13.5z' fill='%23ea9222'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23f3ebd6'/%3E%3Cpath d='M8 17c10-2 19 1 24 8 5-7 14-10 24-8v31c-10-2-19 1-24 8-5-7-14-10-24-8V17z' fill='%23041a11'/%3E%3Cpath d='M12 14c8-2 15 1 19 7v27c-4-5-11-8-19-6V14z' fill='%23083b27'/%3E%3Cpath d='M52 14c-8-2-15 1-19 7v27c-4-5 11-8 19-6V14z' fill='%23083b27'/%3E%3Cpath d='M42 13.5l7-.5v19l-3.5-4.5L42 32V13.5z' fill='%23ea9222'/%3E%3C/svg%3E"
     />
+
+    <!-- OpenGraph -->
+    <meta property="og:site_name" content="Fólio" />
+    <meta property="og:type" content="website" />
+    <meta property="og:locale" content="pt_MZ" />
+    <meta property="og:title" content="Fólio — Matérias Escolares de Moçambique (1.ª–12.ª)" />
+    <meta
+      property="og:description"
+      content="Pesquisa matérias escolares da 1.ª à 12.ª classe em Moçambique. Lê o resumo grátis, vai direto à página exata e estuda 100% offline por 17 MT."
+    />
+    <meta property="og:url" content="https://folio-one-snowy.vercel.app/" />
+    <meta property="og:image" content="https://folio-one-snowy.vercel.app/og-folio.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="Fólio — A página certa para cada dúvida. Matérias escolares da 1.ª à 12.ª classe em Moçambique."
+    />
+
+    <!-- Twitter Card -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Fólio — Matérias Escolares de Moçambique (1.ª–12.ª)" />
+    <meta
+      name="twitter:description"
+      content="Pesquisa matérias escolares da 1.ª à 12.ª classe em Moçambique. Lê o resumo grátis, vai direto à página exata e estuda 100% offline por 17 MT."
+    />
+    <meta name="twitter:image" content="https://folio-one-snowy.vercel.app/og-folio.png" />
+    <meta
+      name="twitter:image:alt"
+      content="Fólio — A página certa para cada dúvida. Matérias escolares da 1.ª à 12.ª classe em Moçambique."
+    />
+
+    <!-- Structured Data (JSON-LD): Organization + WebSite + EducationalApplication + FAQPage -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "Organization",
+            "@id": "https://folio-one-snowy.vercel.app/#organization",
+            "name": "Fólio",
+            "url": "https://folio-one-snowy.vercel.app/",
+            "logo": {
+              "@type": "ImageObject",
+              "url": "https://folio-one-snowy.vercel.app/assets/folio-symbol.png"
+            },
+            "areaServed": {
+              "@type": "Country",
+              "name": "Moçambique"
+            }
+          },
+          {
+            "@type": "WebSite",
+            "@id": "https://folio-one-snowy.vercel.app/#website",
+            "name": "Fólio",
+            "alternateName": "Fólio — A página certa para cada dúvida",
+            "url": "https://folio-one-snowy.vercel.app/",
+            "inLanguage": "pt-MZ",
+            "publisher": {
+              "@id": "https://folio-one-snowy.vercel.app/#organization"
+            },
+            "potentialAction": {
+              "@type": "SearchAction",
+              "target": "https://folio-one-snowy.vercel.app/?q={search_term_string}",
+              "query-input": "required name=search_term_string"
+            }
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "https://folio-one-snowy.vercel.app/#app",
+            "name": "Fólio",
+            "url": "https://folio-one-snowy.vercel.app/",
+            "applicationCategory": "EducationalApplication",
+            "operatingSystem": "Web, Android, iOS",
+            "inLanguage": "pt-MZ",
+            "description": "Plataforma de pesquisa curricular e estudo 100% offline para o Sistema Nacional de Educação de Moçambique (1.ª à 12.ª classe).",
+            "offers": {
+              "@type": "Offer",
+              "price": "17",
+              "priceCurrency": "MZN",
+              "description": "Taxa única de sincronização offline por disciplina e classe via M-Pesa ou e-Mola."
+            }
+          },
+          {
+            "@type": "FAQPage",
+            "@id": "https://folio-one-snowy.vercel.app/#faq",
+            "mainEntity": [
+              {
+                "@type": "Question",
+                "name": "O que é o Fólio e que classes cobre em Moçambique?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "O Fólio é uma aplicação educativa criada para estudantes, pais e explicadores em Moçambique, com matérias curriculares organizadas da 1.ª à 12.ª classe do Sistema Nacional de Educação (SNE), indicando o tema, resumo gratuito e página exata."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "É preciso criar conta para pesquisar e ler resumos no Fólio?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Não. A pesquisa por tema ou disciplina, a leitura do resumo de meio parágrafo e a pré-visualização da página exata são 100% gratuitas e não exigem conta."
+                }
+              },
+              {
+                "@type": "Question",
+                "name": "Como funciona o estudo offline por 17 MT via M-Pesa ou e-Mola?",
+                "acceptedAnswer": {
+                  "@type": "Answer",
+                  "text": "Para estudar toda a matéria de uma disciplina e classe sem precisar de internet, o estudante desbloqueia a disciplina pagando uma taxa única de 17 MT por M-Pesa ou e-Mola. O conteúdo fica sincronizado na conta para leitura offline em modos Papel, Sépia e Noite."
+                }
+              }
+            ]
+          }
+        ]
+      }
+    </script>
+
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
@@ -21,9 +142,101 @@
       rel="stylesheet"
     />
   </head>
-  <body>
+  <body style="background:#f3ebd6;color:#041a11;">
     <a href="#main" class="skip-link">Saltar para o conteúdo</a>
-    <div id="root"></div>
+    <!-- Pre-rendered editorial HTML immediately replaced when React mounts (guarantees instant crawlability & zero JS-shell penalties) -->
+    <div id="root">
+      <main
+        id="main"
+        style="max-width:860px;margin:0 auto;padding:28px 20px 56px;font-family:'Plus Jakarta Sans',system-ui,sans-serif;line-height:1.65;"
+      >
+        <header style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:36px;">
+          <img
+            src="/assets/folio-logo.png"
+            alt="Fólio — A página certa para cada dúvida"
+            width="156"
+            height="40"
+            style="height:36px;width:auto;"
+          />
+          <span style="font-size:12px;font-weight:700;color:#083b27;background:#fcf8ee;border:1px solid #e3d7ba;border-radius:999px;padding:6px 14px;">
+            1.ª à 12.ª Classe · SNE Moçambique
+          </span>
+        </header>
+
+        <section>
+          <p style="font-size:12px;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:#083b27;margin:0 0 10px;">
+            Matéria escolar · Moçambique
+          </p>
+          <h1 style="font-size:36px;line-height:1.1;letter-spacing:-0.03em;margin:0 0 16px;color:#041a11;">
+            A página certa para cada dúvida.
+          </h1>
+          <p style="font-size:17px;color:#2f4238;margin:0 0 22px;max-width:62ch;">
+            O Fólio é a plataforma de pesquisa curricular e leitura didática offline criada para o
+            Sistema Nacional de Educação (SNE) de Moçambique. Escreve qualquer tema escolar da
+            1.ª à 12.ª classe, lê imediatamente o resumo gratuito de meio parágrafo, confirma o
+            número exato da página e desbloqueia a disciplina completa por 17 MT via M-Pesa ou
+            e-Mola para estudar 100% offline.
+          </p>
+          <p style="margin:0 0 32px;">
+            <a
+              href="/materias"
+              style="display:inline-block;background:#083b27;color:#fcf8ee;text-decoration:none;font-weight:700;padding:12px 22px;border-radius:14px;"
+            >
+              Explorar Índice de Matérias (1.ª–12.ª Classe)
+            </a>
+          </p>
+        </section>
+
+        <section style="margin-top:32px;padding-top:24px;border-top:1px solid #e3d7ba;">
+          <h2 style="font-size:20px;margin:0 0 12px;color:#083b27;">
+            Ciclos escolares disponíveis em Moçambique
+          </h2>
+          <p style="color:#2f4238;margin:0 0 14px;">
+            Navega diretamente pelas disciplinas organizadas por ciclo escolar, com pré-visualização
+            gratuita dos temas, conceitos-chave e esquemas ilustrativos.
+          </p>
+          <ul style="padding-left:20px;margin:0;color:#041a11;">
+            <li style="margin-bottom:8px;">
+              <a href="/materias#ciclo-1-6" style="color:#083b27;font-weight:700;">
+                Ensino Primário (1.ª à 6.ª Classe)
+              </a>
+              — Língua Portuguesa, Matemática, Ciências Naturais e Ciências Sociais.
+            </li>
+            <li style="margin-bottom:8px;">
+              <a href="/materias#ciclo-7-9" style="color:#083b27;font-weight:700;">
+                1.º Ciclo do Ensino Secundário (7.ª à 9.ª Classe)
+              </a>
+              — Matemática, Física, Química, Biologia, História, Geografia e Português.
+            </li>
+            <li>
+              <a href="/materias#ciclo-10-12" style="color:#083b27;font-weight:700;">
+                2.º Ciclo do Ensino Secundário (10.ª à 12.ª Classe)
+              </a>
+              — Preparação para exames com Biologia, Física, Química, Matemática e História.
+            </li>
+          </ul>
+        </section>
+
+        <section style="margin-top:32px;padding-top:24px;border-top:1px solid #e3d7ba;">
+          <h2 style="font-size:20px;margin:0 0 12px;color:#083b27;">
+            Estudo 100% offline desenhado para redes móveis
+          </h2>
+          <p style="color:#2f4238;margin:0;">
+            A pesquisa escolar e o resumo de meio parágrafo são leves, gratuitos e abrem sem
+            precisar de conta. Quando quiseres continuar a matéria completa, a taxa única de
+            sincronização de 17 MT por disciplina dá acesso offline protegido na tua conta, com
+            leitura confortável em modos Papel, Sépia e Noite, ajuste de letra e marcadores de
+            página.
+          </p>
+        </section>
+
+        <footer style="margin-top:40px;padding-top:18px;border-top:1px solid #e3d7ba;font-size:13px;color:#646050;">
+          <span>Fólio · Para alunos, pais e explicadores em Moçambique.</span>
+          &nbsp;·&nbsp;
+          <a href="/materias" style="color:#083b27;font-weight:600;">Índice de Matérias</a>
+        </footer>
+      </main>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

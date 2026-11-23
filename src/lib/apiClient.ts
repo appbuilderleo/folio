@@ -137,11 +137,13 @@ export interface MySubjectOverview {
 // ============================================================================
 export async function fetchTopics(
   query: string,
-  cycle: SchoolCycle
+  cycle: SchoolCycle,
+  topicId?: string | null
 ): Promise<{ topics: TopicSearchItem[]; totalCurricula: number }> {
   const params = new URLSearchParams();
   if (query.trim()) params.set('q', query.trim());
   if (cycle !== 'all') params.set('cycle', cycle);
+  if (topicId?.trim()) params.set('topicId', topicId.trim());
 
   const hadToken = Boolean(getStoredToken());
   const res = await resilientFetch(

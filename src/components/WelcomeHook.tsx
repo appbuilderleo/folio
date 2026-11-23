@@ -195,11 +195,20 @@ export function WelcomeHook({ onStartSearch, totalCurriculaCount }: WelcomeHookP
       {/* Quiet Editorial Footer */}
       <footer className="w-full max-w-5xl mx-auto pt-2 flex flex-wrap items-center justify-between gap-2 text-[12px] text-ink-muted">
         <span>Para alunos, pais e explicadores.</span>
-        <span className="tabular-nums">
-          {totalCurriculaCount > 0
-            ? `${totalCurriculaCount} disciplinas indexadas`
-            : 'Currículo SNE · 1.ª à 12.ª Classe'}
-        </span>
+        <div className="flex flex-wrap items-center gap-3 tabular-nums">
+          <a
+            href="/materias"
+            className="font-semibold text-forest underline decoration-sand-strong underline-offset-4 hover:text-amber transition-colors"
+          >
+            Índice de matérias
+          </a>
+          <span aria-hidden="true">·</span>
+          <span>
+            {totalCurriculaCount > 0
+              ? `${totalCurriculaCount} disciplinas indexadas`
+              : 'Currículo SNE · 1.ª à 12.ª Classe'}
+          </span>
+        </div>
       </footer>
     </main>
   );
