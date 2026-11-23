@@ -482,13 +482,25 @@ export function AdminPanel() {
         {dashError && (
           <div
             role="alert"
-            className="rounded-2xl bg-red-50 border border-red-200 px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-[13px] text-red-800"
+            className="rounded-2xl bg-red-50 border border-red-200 p-4 flex flex-wrap items-center justify-between gap-3 text-[13px] text-red-900"
           >
-            <span>{dashError}</span>
+            <div className="flex items-start gap-2.5">
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-600" aria-hidden="true" />
+              <div>
+                <p className="font-bold text-[12px] uppercase tracking-[0.04em] text-red-800">
+                  Aviso de Comunicação
+                </p>
+                <p className="text-red-900 mt-0.5">
+                  {/timed?\s*out|abort/i.test(dashError)
+                    ? 'A ligação demorou mais do que o esperado (rede móvel lenta). Clica em tentar novamente.'
+                    : dashError}
+                </p>
+              </div>
+            </div>
             <button
               type="button"
               onClick={() => void loadDashboard()}
-              className="px-3 py-1.5 rounded-xl bg-red-700 text-white text-[12px] font-bold cursor-pointer hover:bg-red-800"
+              className="px-3.5 py-1.5 rounded-xl bg-red-700 text-white text-[12px] font-bold cursor-pointer hover:bg-red-800 shadow-xs"
             >
               Tentar novamente
             </button>
@@ -521,10 +533,19 @@ export function AdminPanel() {
           {uploadError && (
             <div
               role="alert"
-              className="mt-4 rounded-xl bg-red-50 border border-red-200 px-3.5 py-2.5 flex items-start gap-2 text-[13px] text-red-800"
+              className="mt-4 rounded-xl bg-red-50 border border-red-200 px-3.5 py-3 flex items-start gap-2.5 text-[13px] text-red-900 leading-snug"
             >
-              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0" aria-hidden="true" />
-              <span>{uploadError}</span>
+              <AlertCircle className="w-4 h-4 mt-0.5 shrink-0 text-red-600" aria-hidden="true" />
+              <div>
+                <p className="font-bold text-[12px] uppercase tracking-[0.04em] text-red-800">
+                  Falha ao publicar matéria
+                </p>
+                <p className="mt-0.5">
+                  {/timed?\s*out|abort/i.test(uploadError)
+                    ? 'O processamento demorou mais do que o esperado (tempo limite de rede excedido). Tenta novamente.'
+                    : uploadError}
+                </p>
+              </div>
             </div>
           )}
 

@@ -326,9 +326,18 @@ async function callGroqTopicBatch(
 
         return { items: parsed.topics, model: data.model || model };
       } catch (err) {
-        lastError = err instanceof Error ? err.message : String(err);
+        const msg = err instanceof Error ? err.message : String(err);
+        if (/timed?\s*out|abort/i.test(msg)) {
+          lastError = 'O serviço de inteligência artificial demorou a responder (tempo limite de ligação). Tenta novamente.';
+        } else {
+          lastError = msg;
+        }
       }
     }
+  }
+
+  if (/timed?\s*out|abort/i.test(lastError)) {
+    throw new Error('O serviço de inteligência artificial demorou a responder (tempo limite excedido). Tenta novamente.');
   }
 
   throw new Error(lastError);
