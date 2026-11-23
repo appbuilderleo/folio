@@ -31,6 +31,7 @@ import type {
   SchoolCycle,
   TopicPage,
   TopicSearchItem,
+  TopicVisual,
   UnlockedCurriculum,
 } from '../src/types/folio';
 
@@ -217,6 +218,7 @@ apiRouter.get('/topics', attachOptionalAuth, async (req: AuthenticatedRequest, r
         t.key_takeaways,
         t.reading_minutes,
         t.search_normalized,
+        jsonb_array_length(COALESCE(t.visuals, '[]'::jsonb))::int AS visuals_count,
         c.subject,
         c.grade,
         c.grade_number,
@@ -283,6 +285,7 @@ apiRouter.get('/topics', attachOptionalAuth, async (req: AuthenticatedRequest, r
           priceMt: Number(r.price_mt || 17),
           curriculumTopicsCount: Number(r.curriculum_topics_count || 1),
           totalPages: Number(r.total_pages || 1),
+          visualsCount: Number(r.visuals_count || 0),
           unlocked: unlockedIds.has(String(r.curriculum_id)),
         },
       });
@@ -317,7 +320,7 @@ apiRouter.get('/curricula/:id/preview', async (req, res) => {
       return res.status(404).json({ error: 'Matéria não encontrada' });
     }
     const tRes = await pool.query(
-      `SELECT id, title, unit_label, page_number, page_end, reading_minutes FROM topics WHERE curriculum_id = $1 ORDER BY topic_order ASC`,
+      `SELECT id, title, unit_label, page_number, page_end, reading_minutes, jsonb_array_length(COALESCE(visuals, '[]'::jsonb))::int AS visuals_count FROM topics WHERE curriculum_id = $1 ORDER BY topic_order ASC`,
       [req.params.id]
     );
 
@@ -337,6 +340,7 @@ apiRouter.get('/curricula/:id/preview', async (req, res) => {
         pageNumber: Number(t.page_number),
         pageEnd: Number(t.page_end || t.page_number),
         readingMinutes: Number(t.reading_minutes || 3),
+        visualsCount: Number(t.visuals_count || 0),
       })),
     };
 
@@ -712,7 +716,7 @@ apiRouter.get('/curricula/:id/content', requireAuth, async (req: AuthenticatedRe
       `
       SELECT
         id, unit_label, title, page_number, page_end, summary_half_paragraph,
-        key_takeaways, keywords, full_text, pages, reading_minutes
+        key_takeaways, keywords, full_text, pages, visuals, reading_minutes
       FROM topics
       WHERE curriculum_id = $1
       ORDER BY topic_order ASC
@@ -747,6 +751,7 @@ apiRouter.get('/curricula/:id/content', requireAuth, async (req: AuthenticatedRe
           .map((p) => p.trim())
           .filter(Boolean),
         pages: Array.isArray(t.pages) ? (t.pages as TopicPage[]) : undefined,
+        visuals: Array.isArray(t.visuals) ? (t.visuals as TopicVisual[]) : [],
         readingMinutes: Number(t.reading_minutes || 3),
       })),
     };
@@ -782,7 +787,9 @@ apiRouter.get('/admin/curricula', requireAdmin, async (_req, res) => {
       ),
       pool.query(
         `
-        SELECT id, curriculum_id, title, page_number, summary_half_paragraph
+        SELECT
+          id, curriculum_id, title, page_number, summary_half_paragraph,
+          jsonb_array_length(COALESCE(visuals, '[]'::jsonb))::int AS visuals_count
         FROM topics
         ORDER BY curriculum_id, topic_order ASC
         `
@@ -801,7 +808,13 @@ apiRouter.get('/admin/curricula', requireAdmin, async (_req, res) => {
 
     const previewsByCurr = new Map<
       string,
-      Array<{ id: string; title: string; pageNumber: number; summaryHalfParagraph: string }>
+      Array<{
+        id: string;
+        title: string;
+        pageNumber: number;
+        summaryHalfParagraph: string;
+        visualsCount: number;
+      }>
     >();
 
     for (const t of topicsRes.rows) {
@@ -812,6 +825,7 @@ apiRouter.get('/admin/curricula', requireAdmin, async (_req, res) => {
         title: String(t.title),
         pageNumber: Number(t.page_number),
         summaryHalfParagraph: String(t.summary_half_paragraph),
+        visualsCount: Number(t.visuals_count || 0),
       });
       previewsByCurr.set(cid, list);
     }
@@ -931,8 +945,8 @@ apiRouter.post('/admin/curricula', requireAdmin, async (req, res) => {
           INSERT INTO topics (
             curriculum_id, topic_order, unit_label, title, page_number, page_end,
             summary_half_paragraph, preview_paragraphs, key_takeaways, keywords,
-            full_text, pages, reading_minutes, search_normalized
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13,$14)
+            full_text, pages, visuals, reading_minutes, search_normalized
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13::jsonb,$14,$15)
           `,
           [
             curriculumId,
@@ -947,6 +961,7 @@ apiRouter.post('/admin/curricula', requireAdmin, async (req, res) => {
             JSON.stringify(t.keywords || []),
             fullText,
             t.pages ? JSON.stringify(t.pages) : null,
+            JSON.stringify(t.visuals || []),
             t.readingMinutes || 3,
             searchNorm,
           ]
@@ -1006,6 +1021,7 @@ apiRouter.post('/admin/curricula/:id/enrich', requireAdmin, async (req, res) => 
       keywords: Array.isArray(t.keywords) ? (t.keywords as string[]) : [],
       paragraphs: String(t.full_text || '').split(/\n{2,}/).filter(Boolean),
       pages: Array.isArray(t.pages) ? (t.pages as TopicPage[]) : undefined,
+      visuals: Array.isArray(t.visuals) ? (t.visuals as TopicVisual[]) : [],
       readingMinutes: Number(t.reading_minutes || 3),
     }));
 
@@ -1037,14 +1053,16 @@ apiRouter.post('/admin/curricula/:id/enrich', requireAdmin, async (req, res) => 
             summary_half_paragraph = $2,
             key_takeaways = $3::jsonb,
             keywords = $4::jsonb,
-            search_normalized = $5
-        WHERE id = $6
+            visuals = $5::jsonb,
+            search_normalized = $6
+        WHERE id = $7
         `,
         [
           updated.title,
           updated.summaryHalfParagraph,
           JSON.stringify(updated.keyTakeaways),
           JSON.stringify(updated.keywords),
+          JSON.stringify(updated.visuals || []),
           searchNorm,
           origId,
         ]

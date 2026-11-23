@@ -80,6 +80,36 @@ export const INITIAL_SNE_CURRICULA: SeedCurriculum[] = [
             ],
           },
         ],
+        visuals: [
+          {
+            id: 'vec-bio-10-foto',
+            kind: 'vector_diagram',
+            pageNumber: 84,
+            title: 'Esquema da Fotossíntese nos Cloroplastos',
+            caption: 'Fluxo energético desde a absorção luminosa nos tilacoides até à síntese de glicose no estroma.',
+            diagram: {
+              type: 'flow',
+              formula: '6 CO₂ + 6 H₂O + Luz Solar → C₆H₁₂O₆ + 6 O₂',
+              steps: [
+                {
+                  label: 'Captação da Luz e Fotólise da Água',
+                  badge: 'Tilacoides',
+                  detail: 'A clorofila absorve luz solar; H₂O quebra-se libertando O₂, ATP e NADPH.',
+                },
+                {
+                  label: 'Ciclo de Calvin (Fixação de CO₂)',
+                  badge: 'Estroma',
+                  detail: 'A enzima RuBisCO fixa CO₂ usando ATP e NADPH da fase fotoquímica.',
+                },
+                {
+                  label: 'Produção de Compostos Orgânicos',
+                  badge: 'Produto Final',
+                  detail: 'Síntese de glicose (C₆H₁₂O₆) e amido para nutrição celular da planta.',
+                },
+              ],
+            },
+          },
+        ],
       },
       {
         unitLabel: 'Bioenergética',
@@ -105,6 +135,36 @@ export const INITIAL_SNE_CURRICULA: SeedCurriculum[] = [
           'Na glicólise, uma molécula de glicose (6 carbonos) divide-se em duas moléculas de piruvato (3 carbonos), com saldo direto de 2 ATP e 2 NADH. Com oxigénio disponível, o piruvato entra na mitocôndria e converte-se em acetil-CoA.',
           'No ciclo de Krebs, o grupo acetilo liga-se ao oxaloacetato formando citrato, libertando CO₂ e carregando coenzimas transportadoras de eletrões (NADH e FADH₂).',
           'Na cadeia respiratória, o fluxo de eletrões cria um gradiente de protões que aciona a enzima ATP-sintase, originando entre 30 e 32 moléculas de ATP por glicose degradada e água como produto final.',
+        ],
+        visuals: [
+          {
+            id: 'vec-bio-10-resp',
+            kind: 'vector_diagram',
+            pageNumber: 96,
+            title: 'Etapas da Respiração Celular Aeróbia',
+            caption: 'Localização celular e rendimento energético em cada etapa da degradação da glicose.',
+            diagram: {
+              type: 'flow',
+              formula: 'C₆H₁₂O₆ + 6 O₂ → 6 CO₂ + 6 H₂O + 30–32 ATP',
+              steps: [
+                {
+                  label: '1. Glicólise',
+                  badge: 'Citoplasma',
+                  detail: 'Glicose (6C) divide-se em 2 piruvatos (3C). Saldo imediato: 2 ATP e 2 NADH.',
+                },
+                {
+                  label: '2. Ciclo de Krebs',
+                  badge: 'Matriz Mitocondrial',
+                  detail: 'Acetil-CoA oxida-se completamente libertando CO₂, NADH e FADH₂.',
+                },
+                {
+                  label: '3. Cadeia Respiratória',
+                  badge: 'Cristas',
+                  detail: 'ATP-sintase produz ~28 ATP usando oxigénio como recetor final (forma H₂O).',
+                },
+              ],
+            },
+          },
         ],
       },
     ],
@@ -154,6 +214,25 @@ export const INITIAL_SNE_CURRICULA: SeedCurriculum[] = [
           'Nas equações incompletas, o caminho é direto: se c = 0 (ex.: 2x² - 8x = 0), evidencia-se x(2x - 8) = 0, obtendo x = 0 ou x = 4. Se b = 0 (ex.: x² - 9 = 0), isola-se x² = 9 e extrai-se x = ±3.',
           'Verificação rápida pela Soma e Produto: x₁ + x₂ = -b/a e x₁ · x₂ = c/a. No exemplo, 2 + 3 = 5 e 2 × 3 = 6, confirmando a exatidão.',
         ],
+        visuals: [
+          {
+            id: 'vec-mat-9-delta',
+            kind: 'vector_diagram',
+            pageNumber: 112,
+            title: 'Interpretação Geométrica do Discriminante (Δ)',
+            caption: 'Relação entre o sinal de Δ e os pontos onde a parábola interseta o eixo das abcissas (x).',
+            diagram: {
+              type: 'parabola_delta',
+              equation: 'ax² + bx + c = 0   (a ≠ 0)',
+              formula: 'Δ = b² − 4ac   |   x = (−b ± √Δ) / 2a',
+              cases: [
+                { condition: 'Δ > 0', label: '2 raízes reais' },
+                { condition: 'Δ = 0', label: '1 raiz dupla' },
+                { condition: 'Δ < 0', label: 'Sem raízes reais' },
+              ],
+            },
+          },
+        ],
       },
       {
         unitLabel: 'Geometria',
@@ -178,6 +257,23 @@ export const INITIAL_SNE_CURRICULA: SeedCurriculum[] = [
           'Algebricamente escreve-se h² = a² + b². Conhecendo quaisquer dois lados de um triângulo retângulo, determina-se com exatidão o terceiro lado.',
           'Exemplo prático: uma escada de 5 m encosta numa parede vertical com a base afastada 3 m. Pela fórmula: 5² = 3² + h² ⇒ 25 = 9 + h² ⇒ h² = 16 ⇒ h = 4 metros de altura.',
           'O recíproco do teorema confirma ângulos retos na prática: se três medidas satisfazem c² = a² + b², então o ângulo oposto ao lado c mede exatamente 90°.',
+        ],
+        visuals: [
+          {
+            id: 'vec-mat-9-pit',
+            kind: 'vector_diagram',
+            pageNumber: 74,
+            title: 'Esquema Geométrico do Teorema de Pitágoras',
+            caption: 'Identificação dos catetos adjacentes ao ângulo de 90° e da hipotenusa oposta.',
+            diagram: {
+              type: 'geometry_triangle',
+              sideA: 'Cateto (a)',
+              sideB: 'Cateto (b)',
+              hypotenuse: 'Hipotenusa (h)',
+              formula: 'h² = a² + b²',
+              note: 'Ex.: 5² = 4² + 3²',
+            },
+          },
         ],
       },
     ],
@@ -226,6 +322,24 @@ export const INITIAL_SNE_CURRICULA: SeedCurriculum[] = [
           'O desgaste das guerras coloniais precipitou o 25 de Abril de 1974 em Portugal, abrindo caminho aos Acordos de Lusaka (7 de Setembro de 1974), que estabeleceram o cessar-fogo e o Governo de Transição chefiado por Joaquim Chissano.',
           'À meia-noite de 25 de Junho de 1975, no Estádio da Machava em Maputo, Samora Machel proclamou a Independência Total e Completa de Moçambique, marcando o nascimento do Estado soberano moçambicano.',
         ],
+        visuals: [
+          {
+            id: 'vec-his-10-indep',
+            kind: 'vector_diagram',
+            pageNumber: 67,
+            title: 'Cronologia da Independência de Moçambique',
+            caption: 'Marcos históricos decisivos desde a fundação da FRELIMO até à proclamação da soberania.',
+            diagram: {
+              type: 'timeline',
+              events: [
+                { date: '25 Jun 1962', label: 'Fundação da FRELIMO', detail: 'Unificação dos movimentos em Dar-es-Salaam (Eduardo Mondlane).' },
+                { date: '25 Set 1964', label: 'Início da Luta Armada', detail: 'Ataque ao posto de Chai em Cabo Delgado.' },
+                { date: '7 Set 1974', label: 'Acordos de Lusaka', detail: 'Cessar-fogo e Governo de Transição chefiado por Joaquim Chissano.' },
+                { date: '25 Jun 1975', label: 'Independência Nacional', detail: 'Proclamação oficial por Samora Machel no Estádio da Machava.' },
+              ],
+            },
+          },
+        ],
       },
     ],
   },
@@ -270,6 +384,35 @@ export const INITIAL_SNE_CURRICULA: SeedCurriculum[] = [
           'O adjetivo acompanha o nome para atribuir uma qualidade ou estado. Na frase "A estudante dedicada leu o caderno novo", "dedicada" e "novo" são adjetivos que concordam em género e número com os nomes respetivos.',
           'O verbo constitui o núcleo da frase verbal, indicando ação (estudar, escrever), estado (ser, estar) ou fenómeno natural (chover). Agrupa-se em três conjugações: 1.ª (-ar), 2.ª (-er) e 3.ª (-ir).',
           'Exercício resolvido: em "O vento fresco agitava as folhas verdes", "vento" e "folhas" são nomes comuns, "fresco" e "verdes" são adjetivos e "agitava" é verbo da 1.ª conjugação.',
+        ],
+        visuals: [
+          {
+            id: 'vec-por-6-classes',
+            kind: 'vector_diagram',
+            pageNumber: 45,
+            title: 'Quadro Comparativo das Classes de Palavras',
+            caption: 'Como identificar rapidamente nomes, adjetivos e verbos dentro da frase.',
+            diagram: {
+              type: 'compare',
+              columns: [
+                {
+                  title: 'Nomes',
+                  badge: 'Seres / Coisas',
+                  points: ['Identificam pessoas, lugares e objetos', 'Próprios (Maputo, Amina)', 'Comuns (escola, rio, vento)'],
+                },
+                {
+                  title: 'Adjetivos',
+                  badge: 'Qualidades',
+                  points: ['Caracterizam o nome', 'Concordam em género e número', 'Ex.: dedicada, fresco, verdes'],
+                },
+                {
+                  title: 'Verbos',
+                  badge: 'Ações / Estados',
+                  points: ['Núcleo da frase verbal', 'Conjugações: -ar, -er, -ir', 'Ex.: estudar, correr, chover'],
+                },
+              ],
+            },
+          },
         ],
       },
     ],
@@ -316,6 +459,27 @@ export const INITIAL_SNE_CURRICULA: SeedCurriculum[] = [
           'Equações fundamentais do MRUV: v(t) = v₀ + a·t; x(t) = x₀ + v₀·t + ½·a·t²; e equação de Torricelli v² = v₀² + 2·a·Δx para problemas sem informação de tempo.',
           'Exemplo resolvido: um autocarro parte do repouso (v₀ = 0) com a = 2 m/s² durante 6 s. Atinge v = 12 m/s e percorre Δx = ½ × 2 × 6² = 36 metros, valor equivalente à área sob o gráfico v(t).',
         ],
+        visuals: [
+          {
+            id: 'vec-fis-11-mruv',
+            kind: 'vector_diagram',
+            pageNumber: 38,
+            title: 'Gráfico Velocidade-Tempo v(t) e Equações do MRUV',
+            caption: 'A inclinação da reta representa a aceleração (a) e a área sombreada corresponde ao deslocamento Δx.',
+            diagram: {
+              type: 'kinematics_graph',
+              xLabel: 'Tempo (s)',
+              yLabel: 'v (m/s)',
+              areaLabel: 'Área = Δx',
+              equations: [
+                'a = (v − v₀) / Δt',
+                'v = v₀ + a·t',
+                'x = x₀ + v₀·t + ½·a·t²',
+                'v² = v₀² + 2·a·Δx',
+              ],
+            },
+          },
+        ],
       },
     ],
   },
@@ -351,6 +515,25 @@ export const INITIAL_SNE_CURRICULA: SeedCurriculum[] = [
           'O motor deste ciclo é a energia solar. Ao aquecer oceanos, solos húmidos e rios como o Zambeze e o Limpopo, o calor provoca a evaporação, fazendo subir vapor de água para a atmosfera.',
           'Ao subir para camadas mais frias da atmosfera, o vapor arrefece e forma minúsculas gotículas líquidas num processo chamado condensação, originando as nuvens.',
           'Quando as gotículas ficam pesadas, caem sob a forma de chuva (precipitação). Parte escorre pelos rios de volta ao mar e outra parte infiltra-se no solo, alimentando poços e nascentes.',
+        ],
+        visuals: [
+          {
+            id: 'vec-cn-5-agua',
+            kind: 'vector_diagram',
+            pageNumber: 31,
+            title: 'Esquema do Ciclo da Água na Natureza',
+            caption: 'Movimento contínuo impulsionado pela energia solar entre superfície, atmosfera e solo.',
+            diagram: {
+              type: 'cycle',
+              centerLabel: 'Ciclo da Água',
+              nodes: [
+                { label: 'Evaporação', detail: 'Calor solar transforma água em vapor' },
+                { label: 'Condensação', detail: 'Vapor arrefece e forma nuvens' },
+                { label: 'Precipitação', detail: 'Queda de chuva sobre a terra' },
+                { label: 'Infiltração', detail: 'Alimenta rios e águas subterrâneas' },
+              ],
+            },
+          },
         ],
       },
     ],

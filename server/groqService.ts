@@ -1,5 +1,5 @@
 import dotenv from 'dotenv';
-import type { AdminTopicDraft } from '../src/types/folio';
+import type { AdminTopicDraft, TopicVisual, VectorDiagramSpec } from '../src/types/folio';
 
 dotenv.config();
 
@@ -13,6 +13,12 @@ const PREFERRED_MODELS = [
 
 const MAX_HALF_PARAGRAPH_CHARS = 220;
 
+interface GroqVectorDiagramPayload {
+  title?: string;
+  caption?: string;
+  diagram?: Record<string, unknown>;
+}
+
 interface GroqTopicOutput {
   index: number;
   title?: string;
@@ -20,6 +26,133 @@ interface GroqTopicOutput {
   keyTakeaways?: string[];
   keywords?: string[];
   cleanedParagraphs?: string[];
+  vectorDiagram?: GroqVectorDiagramPayload | null;
+}
+
+function sanitizeGroqVectorVisual(
+  raw: GroqVectorDiagramPayload | null | undefined,
+  pageNumber: number,
+  topicIndex: number
+): TopicVisual | null {
+  if (!raw || typeof raw !== 'object' || !raw.diagram || typeof raw.diagram !== 'object') {
+    return null;
+  }
+  const d = raw.diagram;
+  const type = String(d.type || '');
+  const title =
+    typeof raw.title === 'string' && raw.title.trim().length >= 4
+      ? raw.title.trim().slice(0, 88)
+      : 'Esquema Ilustrativo';
+  const caption =
+    typeof raw.caption === 'string' && raw.caption.trim().length >= 8
+      ? raw.caption.trim().slice(0, 180)
+      : undefined;
+
+  let spec: VectorDiagramSpec | null = null;
+
+  if (type === 'flow' && Array.isArray(d.steps)) {
+    const steps = d.steps
+      .filter((s): s is Record<string, unknown> => Boolean(s && typeof s === 'object' && typeof (s as Record<string, unknown>).label === 'string'))
+      .slice(0, 5)
+      .map((s) => ({
+        label: String(s.label).trim().slice(0, 54),
+        detail: typeof s.detail === 'string' ? s.detail.trim().slice(0, 105) : undefined,
+        badge: typeof s.badge === 'string' ? s.badge.trim().slice(0, 20) : undefined,
+      }))
+      .filter((s) => s.label.length >= 2);
+    if (steps.length >= 2) {
+      spec = {
+        type: 'flow',
+        formula: typeof d.formula === 'string' && d.formula.trim() ? d.formula.trim().slice(0, 72) : undefined,
+        steps,
+      };
+    }
+  } else if (type === 'cycle' && Array.isArray(d.nodes)) {
+    const nodes = d.nodes
+      .filter((n): n is Record<string, unknown> => Boolean(n && typeof n === 'object' && typeof (n as Record<string, unknown>).label === 'string'))
+      .slice(0, 6)
+      .map((n) => ({
+        label: String(n.label).trim().slice(0, 26),
+        detail: typeof n.detail === 'string' ? n.detail.trim().slice(0, 48) : undefined,
+      }))
+      .filter((n) => n.label.length >= 2);
+    if (nodes.length >= 3) {
+      spec = {
+        type: 'cycle',
+        centerLabel:
+          typeof d.centerLabel === 'string' && d.centerLabel.trim()
+            ? d.centerLabel.trim().slice(0, 28)
+            : title.slice(0, 28),
+        nodes,
+      };
+    }
+  } else if (type === 'compare' && Array.isArray(d.columns)) {
+    const columns = d.columns
+      .filter((c): c is Record<string, unknown> => Boolean(c && typeof c === 'object' && typeof (c as Record<string, unknown>).title === 'string' && Array.isArray((c as Record<string, unknown>).points)))
+      .slice(0, 3)
+      .map((c) => ({
+        title: String(c.title).trim().slice(0, 32),
+        badge: typeof c.badge === 'string' ? c.badge.trim().slice(0, 20) : undefined,
+        points: (c.points as unknown[]).map((pt) => String(pt).trim().slice(0, 95)).filter((pt) => pt.length >= 3).slice(0, 4),
+      }))
+      .filter((c) => c.title.length >= 2 && c.points.length >= 1);
+    if (columns.length >= 2) {
+      spec = { type: 'compare', columns };
+    }
+  } else if (type === 'timeline' && Array.isArray(d.events)) {
+    const events = d.events
+      .filter((e): e is Record<string, unknown> => Boolean(e && typeof e === 'object' && typeof (e as Record<string, unknown>).date === 'string' && typeof (e as Record<string, unknown>).label === 'string'))
+      .slice(0, 6)
+      .map((e) => ({
+        date: String(e.date).trim().slice(0, 16),
+        label: String(e.label).trim().slice(0, 48),
+        detail: typeof e.detail === 'string' ? e.detail.trim().slice(0, 90) : undefined,
+      }))
+      .filter((e) => e.date.length >= 2 && e.label.length >= 2);
+    if (events.length >= 2) {
+      spec = { type: 'timeline', events };
+    }
+  } else if (type === 'geometry_triangle' && typeof d.formula === 'string') {
+    spec = {
+      type: 'geometry_triangle',
+      sideA: String(d.sideA || 'Cateto (a)').slice(0, 20),
+      sideB: String(d.sideB || 'Cateto (b)').slice(0, 20),
+      hypotenuse: String(d.hypotenuse || 'Hipotenusa (h)').slice(0, 22),
+      formula: String(d.formula).slice(0, 30),
+      note: typeof d.note === 'string' ? d.note.slice(0, 48) : undefined,
+    };
+  } else if (type === 'atom_model' && Array.isArray(d.shells)) {
+    const shells = d.shells.map((s) => String(s).trim().slice(0, 32)).filter(Boolean).slice(0, 4);
+    if (shells.length >= 1) {
+      spec = {
+        type: 'atom_model',
+        nucleusLabel: String(d.nucleusLabel || 'Núcleo').slice(0, 14),
+        shells,
+        note: typeof d.note === 'string' ? d.note.slice(0, 64) : undefined,
+      };
+    }
+  } else if (type === 'kinematics_graph' && Array.isArray(d.equations)) {
+    const equations = d.equations.map((eq) => String(eq).trim().slice(0, 28)).filter(Boolean).slice(0, 4);
+    if (equations.length >= 1) {
+      spec = {
+        type: 'kinematics_graph',
+        xLabel: String(d.xLabel || 'Tempo (s)').slice(0, 16),
+        yLabel: String(d.yLabel || 'v (m/s)').slice(0, 16),
+        areaLabel: String(d.areaLabel || 'Área = Δx').slice(0, 16),
+        equations,
+      };
+    }
+  }
+
+  if (!spec) return null;
+  return {
+    id: `vec-ai-p${pageNumber}-${topicIndex + 1}`,
+    kind: 'vector_diagram',
+    pageNumber,
+    title,
+    caption,
+    diagram: spec,
+  };
 }
 
 export interface GroqTopicsEnrichResult {
@@ -119,9 +252,10 @@ async function callGroqTopicBatch(
     hasOcrTopics
       ? '5. Quando "sourceWasOcr" for true, devolve também "cleanedParagraphs" corrigindo gralhas evidentes de OCR (ex: letras trocadas, acentos em falta, ruído de margens/fotos) mantendo rigorosamente o texto original completo de cada parágrafo.'
       : '5. Foca em títulos claros, resumos rigorosos de ½ parágrafo e palavras-chave úteis para busca.',
-    '6. Devolve APENAS JSON válido neste formato exato:',
-    '{"topics":[{"index":0,"title":"título limpo do tema","summaryHalfParagraph":"2 frases objetivas até 215 caracteres.","keyTakeaways":["ponto concreto 1","ponto concreto 2","ponto concreto 3"],"keywords":["termo1","termo2","termo3","termo4","termo5","termo6"],"cleanedParagraphs":["parágrafo 1 corrigido..."]}]}',
-    '7. Em "keywords", inclui 5 a 7 termos em minúsculas que estudantes ou pais pesquisariam (incluindo sinónimos escolares comuns).',
+    '6. Sempre que o tema envolver processo, classificação, comparação, medição, fórmula, cronologia ou ciclo, cria TAMBÉM um "vectorDiagram" didático fiel ao conteúdo escolhendo UM destes tipos: "flow" (steps: [{label, badge?, detail?}], formula?), "compare" (columns: [{title, badge?, points[]}]), "cycle" (centerLabel, nodes: [{label, detail?}]), "timeline" (events: [{date, label, detail?}]), "atom_model" (nucleusLabel, shells[], note?), "geometry_triangle" (sideA, sideB, hypotenuse, formula, note?) ou "kinematics_graph" (xLabel, yLabel, areaLabel, equations[]).',
+    '7. Devolve APENAS JSON válido neste formato exato (usa um título específico do tema em vectorDiagram.title, nunca texto genérico):',
+    '{"topics":[{"index":0,"title":"título limpo do tema","summaryHalfParagraph":"2 frases objetivas até 215 caracteres.","keyTakeaways":["ponto concreto 1","ponto concreto 2","ponto concreto 3"],"keywords":["termo1","termo2","termo3","termo4","termo5","termo6"],"cleanedParagraphs":["parágrafo 1 corrigido..."],"vectorDiagram":{"title":"título específico do esquema","caption":"explicação curta do esquema","diagram":{"type":"compare","columns":[{"title":"...","points":["..."]}]}}}]}',
+    '8. Em "keywords", inclui 5 a 7 termos em minúsculas que estudantes ou pais pesquisariam (incluindo sinónimos escolares comuns).',
   ].join('\n');
 
   const userPrompt = JSON.stringify({
@@ -334,6 +468,15 @@ export async function enrichTopicsWithGroq(
       }
     }
 
+    // Preserve real extracted figures cropped from the PDF and append/update the AI vector diagram
+    const existingExtracted = (topic.visuals || []).filter((v) => v.kind === 'extracted_figure');
+    const existingVectors = (topic.visuals || []).filter((v) => v.kind === 'vector_diagram');
+    const aiVector = sanitizeGroqVectorVisual(ai.vectorDiagram, topic.pageNumber, idx);
+    const mergedVisuals: TopicVisual[] = [
+      ...existingExtracted,
+      ...(aiVector ? [aiVector] : existingVectors),
+    ];
+
     enrichedCount += 1;
 
     return {
@@ -345,6 +488,7 @@ export async function enrichTopicsWithGroq(
       paragraphs: finalParagraphs,
       previewParagraphs: finalParagraphs.slice(0, 2),
       pages: finalPages,
+      visuals: mergedVisuals,
     };
   });
 

@@ -27,9 +27,76 @@ export interface TopicPage {
   paragraphs: string[];
 }
 
+export type VectorDiagramSpec =
+  | {
+      type: 'flow';
+      formula?: string;
+      steps: Array<{ label: string; detail?: string; badge?: string }>;
+    }
+  | {
+      type: 'cycle';
+      centerLabel: string;
+      nodes: Array<{ label: string; detail?: string }>;
+    }
+  | {
+      type: 'compare';
+      columns: Array<{ title: string; badge?: string; points: string[] }>;
+    }
+  | {
+      type: 'timeline';
+      events: Array<{ date: string; label: string; detail?: string }>;
+    }
+  | {
+      type: 'geometry_triangle';
+      sideA: string;
+      sideB: string;
+      hypotenuse: string;
+      formula: string;
+      note?: string;
+    }
+  | {
+      type: 'parabola_delta';
+      equation: string;
+      formula: string;
+      cases: Array<{ condition: string; label: string }>;
+    }
+  | {
+      type: 'kinematics_graph';
+      xLabel: string;
+      yLabel: string;
+      areaLabel: string;
+      equations: string[];
+    }
+  | {
+      type: 'atom_model';
+      nucleusLabel: string;
+      shells: string[];
+      note?: string;
+    };
+
+export type TopicVisual =
+  | {
+      id: string;
+      kind: 'extracted_figure';
+      pageNumber: number;
+      title: string;
+      caption?: string;
+      imageDataUrl: string;
+      width?: number;
+      height?: number;
+    }
+  | {
+      id: string;
+      kind: 'vector_diagram';
+      pageNumber: number;
+      title: string;
+      caption?: string;
+      diagram: VectorDiagramSpec;
+    };
+
 /**
  * Lightweight 3G/4G search/discovery payload returned by GET /api/topics.
- * Strictly excludes full_text and pages so unpaid content is never leaked.
+ * Strictly excludes full_text, pages, and heavy visual payloads so unpaid content is never leaked.
  */
 export interface TopicSearchItem {
   id: string;
@@ -49,6 +116,7 @@ export interface TopicSearchItem {
   priceMt: number;
   curriculumTopicsCount: number;
   totalPages: number;
+  visualsCount: number;
   unlocked: boolean;
 }
 
@@ -68,6 +136,7 @@ export interface UnlockedTopic {
   keywords: string[];
   paragraphs: string[];
   pages?: TopicPage[];
+  visuals?: TopicVisual[];
   readingMinutes: number;
 }
 
@@ -100,6 +169,7 @@ export interface PreviewCurriculumInfo {
     pageNumber: number;
     pageEnd: number;
     readingMinutes: number;
+    visualsCount?: number;
   }>;
 }
 
@@ -145,6 +215,7 @@ export interface AdminTopicDraft {
   keywords: string[];
   paragraphs: string[];
   pages?: TopicPage[];
+  visuals?: TopicVisual[];
   readingMinutes: number;
   sourceWasOcr?: boolean;
 }
@@ -166,6 +237,7 @@ export interface AdminCurriculumOverview {
     title: string;
     pageNumber: number;
     summaryHalfParagraph: string;
+    visualsCount: number;
   }>;
 }
 

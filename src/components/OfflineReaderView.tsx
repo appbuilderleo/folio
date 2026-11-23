@@ -27,6 +27,7 @@ import type {
   UnlockedCurriculum,
   UnlockedTopic,
 } from '../types/folio';
+import { TopicVisualCard } from './EditorialDiagram';
 
 interface OfflineReaderViewProps {
   curriculum: UnlockedCurriculum;
@@ -398,29 +399,70 @@ export function OfflineReaderView({
           )}
         </section>
 
-        {/* Full Editorial Prose */}
+        {/* Editorial Vector Schematics (theme-adaptive SVG) */}
+        {(topic.visuals || [])
+          .filter((v) => v.kind === 'vector_diagram')
+          .map((vis) => (
+            <TopicVisualCard key={vis.id} visual={vis} theme={prefs.theme} />
+          ))}
+
+        {/* Full Editorial Prose + Inline Original Figures Mapped to Exact Pages */}
         <article
           className="mt-8 font-editorial reader-prose space-y-5 max-w-[60ch] select-none"
           style={{ fontSize: `${fontSizePx}px`, lineHeight: prefs.theme === 'night' ? 1.78 : 1.72 }}
         >
           {topic.pages && topic.pages.length > 0
-            ? topic.pages.map((pg, idx) => (
-                <div key={pg.pageNumber} id={`folio-page-${pg.pageNumber}`} className="scroll-mt-20">
-                  <div
-                    className={`flex items-center gap-3 my-6 first:mt-0 text-[11px] font-sans font-bold uppercase tracking-[0.14em] ${theme.muted}`}
-                  >
-                    <span className={`h-[1px] flex-1 border-t ${theme.border}`} aria-hidden="true" />
-                    <span className="tabular-nums">Página {pg.pageNumber}</span>
-                    <span className={`h-[1px] flex-1 border-t ${theme.border}`} aria-hidden="true" />
-                  </div>
-                  <div className="space-y-5">
-                    {pg.paragraphs.map((p, pIdx) => (
-                      <p key={`${idx}-${pIdx}`}>{p}</p>
+            ? (() => {
+                const extractedFigs = (topic.visuals || []).filter(
+                  (v) => v.kind === 'extracted_figure'
+                );
+                const renderedFigIds = new Set<string>();
+                const pageBlocks = topic.pages.map((pg, idx) => {
+                  const pageFigs = extractedFigs.filter((f) => f.pageNumber === pg.pageNumber);
+                  pageFigs.forEach((f) => renderedFigIds.add(f.id));
+                  return (
+                    <div key={pg.pageNumber} id={`folio-page-${pg.pageNumber}`} className="scroll-mt-20">
+                      <div
+                        className={`flex items-center gap-3 my-6 first:mt-0 text-[11px] font-sans font-bold uppercase tracking-[0.14em] ${theme.muted}`}
+                      >
+                        <span className={`h-[1px] flex-1 border-t ${theme.border}`} aria-hidden="true" />
+                        <span className="tabular-nums">Página {pg.pageNumber}</span>
+                        <span className={`h-[1px] flex-1 border-t ${theme.border}`} aria-hidden="true" />
+                      </div>
+                      <div className="space-y-5">
+                        {pg.paragraphs.map((p, pIdx) => (
+                          <p key={`${idx}-${pIdx}`}>{p}</p>
+                        ))}
+                      </div>
+                      {pageFigs.map((fig) => (
+                        <TopicVisualCard key={fig.id} visual={fig} theme={prefs.theme} />
+                      ))}
+                    </div>
+                  );
+                });
+
+                const unmappedFigs = extractedFigs.filter((f) => !renderedFigIds.has(f.id));
+                return (
+                  <>
+                    {pageBlocks}
+                    {unmappedFigs.map((fig) => (
+                      <TopicVisualCard key={fig.id} visual={fig} theme={prefs.theme} />
                     ))}
-                  </div>
-                </div>
-              ))
-            : topic.paragraphs.map((p, idx) => <p key={idx}>{p}</p>)}
+                  </>
+                );
+              })()
+            : (
+              <>
+                {topic.paragraphs.map((p, idx) => (
+                  <p key={idx}>{p}</p>
+                ))}
+                {(topic.visuals || [])
+                  .filter((v) => v.kind === 'extracted_figure')
+                  .map((fig) => (
+                    <TopicVisualCard key={fig.id} visual={fig} theme={prefs.theme} />
+                  ))}
+              </>
+            )}
         </article>
 
         {/* Topic Navigation */}

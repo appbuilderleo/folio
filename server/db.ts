@@ -107,9 +107,14 @@ export async function ensureSchema(): Promise<{ connected: boolean; error?: stri
         keywords JSONB NOT NULL DEFAULT '[]'::jsonb,
         full_text TEXT NOT NULL,
         pages JSONB,
+        visuals JSONB NOT NULL DEFAULT '[]'::jsonb,
         reading_minutes INT NOT NULL DEFAULT 3,
         search_normalized TEXT NOT NULL DEFAULT ''
       );
+    `);
+
+    await pool.query(`
+      ALTER TABLE topics ADD COLUMN IF NOT EXISTS visuals JSONB NOT NULL DEFAULT '[]'::jsonb;
     `);
 
     await pool.query(`
@@ -142,6 +147,8 @@ export async function ensureSchema(): Promise<{ connected: boolean; error?: stri
 
     // Seed initial 6 SNE curricula once so public search is immediately rich (editable/deletable in /admin)
     await seedInitialCurriculaOnce();
+    // Backfill vector diagrams onto already-seeded SNE base topics if visuals are empty
+    await backfillSeedVisualsOnce();
 
     return { connected: true };
   } catch (err) {
@@ -219,8 +226,8 @@ async function seedInitialCurriculaOnce(): Promise<void> {
           INSERT INTO topics (
             curriculum_id, topic_order, unit_label, title, page_number, page_end,
             summary_half_paragraph, preview_paragraphs, key_takeaways, keywords,
-            full_text, pages, reading_minutes, search_normalized
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13,$14)
+            full_text, pages, visuals, reading_minutes, search_normalized
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13::jsonb,$14,$15)
           `,
           [
             curriculumId,
@@ -235,6 +242,7 @@ async function seedInitialCurriculaOnce(): Promise<void> {
             JSON.stringify(t.keywords),
             fullText,
             t.pages ? JSON.stringify(t.pages) : null,
+            JSON.stringify(t.visuals || []),
             t.readingMinutes,
             searchNorm,
           ]
@@ -252,4 +260,35 @@ async function seedInitialCurriculaOnce(): Promise<void> {
   } finally {
     client.release();
   }
+}
+
+async function backfillSeedVisualsOnce(): Promise<void> {
+  if (!pool) return;
+  const flag = await pool.query(`SELECT value FROM folio_meta WHERE key = 'seed_visuals_v1'`);
+  if (flag.rows.length > 0) return;
+
+  for (const curr of INITIAL_SNE_CURRICULA) {
+    const cRes = await pool.query(`SELECT id FROM curricula WHERE slug = $1`, [curr.slug]);
+    if (cRes.rows.length === 0) continue;
+    const curriculumId = String(cRes.rows[0].id);
+
+    for (let i = 0; i < curr.topics.length; i++) {
+      const t = curr.topics[i];
+      if (!t.visuals || t.visuals.length === 0) continue;
+      await pool.query(
+        `
+        UPDATE topics
+        SET visuals = $1::jsonb
+        WHERE curriculum_id = $2
+          AND topic_order = $3
+          AND (visuals IS NULL OR jsonb_array_length(visuals) = 0)
+        `,
+        [JSON.stringify(t.visuals), curriculumId, i]
+      );
+    }
+  }
+
+  await pool.query(
+    `INSERT INTO folio_meta (key, value) VALUES ('seed_visuals_v1', 'true') ON CONFLICT (key) DO NOTHING`
+  );
 }

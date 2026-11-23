@@ -223,10 +223,14 @@ export function AdminPanel() {
       });
 
       const ocrNote =
-        extracted.stats.ocrPages > 0 ? ` · ${extracted.stats.ocrPages} págs. lidas via OCR` : '';
+        extracted.stats.ocrPages > 0 ? ` · ${extracted.stats.ocrPages} págs. OCR` : '';
+      const figNote =
+        extracted.stats.figuresCount > 0
+          ? ` · ${extracted.stats.figuresCount} ilustrações extraídas`
+          : '';
 
       setPublishNotice(
-        `${res.subject} (${res.grade}) publicada com ${res.topicsCount} temas indexados${ocrNote} (${res.groqEnrichedCount} resumidos pela Groq).`
+        `${res.subject} (${res.grade}) publicada com ${res.topicsCount} temas indexados${ocrNote}${figNote} (${res.groqEnrichedCount} resumidos + esquemas vetoriais via Groq).`
       );
       setSelectedFile(null);
       setPdfInspect(null);
@@ -827,9 +831,16 @@ export function AdminPanel() {
                       <div key={t.id} className="rounded-xl bg-parchment/65 border border-sand p-3">
                         <div className="flex items-baseline justify-between gap-2">
                           <p className="text-[13.5px] font-bold text-ink">{t.title}</p>
-                          <span className="text-[11.5px] font-extrabold text-forest tabular-nums shrink-0">
-                            Pág. {t.pageNumber}
-                          </span>
+                          <div className="flex items-center gap-2 shrink-0">
+                            {t.visualsCount > 0 && (
+                              <span className="rounded-full bg-amber-soft px-2 py-0.5 text-[10.5px] font-bold text-ink tabular-nums">
+                                {t.visualsCount} {t.visualsCount === 1 ? 'esquema' : 'esquemas'}
+                              </span>
+                            )}
+                            <span className="text-[11.5px] font-extrabold text-forest tabular-nums">
+                              Pág. {t.pageNumber}
+                            </span>
+                          </div>
                         </div>
                         <p className="mt-1 text-[12.5px] text-ink-soft leading-relaxed">
                           {t.summaryHalfParagraph}

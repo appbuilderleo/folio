@@ -1,6 +1,6 @@
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
-import type { AdminTopicDraft, DissectionProgress, TopicPage } from '../types/folio';
+import type { AdminTopicDraft, DissectionProgress, TopicPage, TopicVisual } from '../types/folio';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -20,6 +20,7 @@ interface ExtractedPage {
   headings: string[];
   rawText: string;
   usedOcr: boolean;
+  figures: TopicVisual[];
 }
 
 export interface AdminPdfInspect {
@@ -49,6 +50,7 @@ export interface AdminDissectResult {
     textPages: number;
     ocrPages: number;
     emptyPages: number;
+    figuresCount: number;
     topicsCount: number;
     totalWords: number;
   };
@@ -270,19 +272,33 @@ async function extractNativePageLines(
   return { cleanLines, detectedWatermark };
 }
 
+interface PixelBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+  text?: string;
+}
+
 /**
- * Renders a scanned PDF page to a preprocessed high-contrast Canvas (cropping off
- * CamScanner bottom watermarks if detected) for maximum Portuguese OCR accuracy.
+ * Renders a PDF page into:
+ * - colorCanvas: natural rendering (cropped above bottom CamScanner watermark if needed), used to crop crisp figures/diagrams
+ * - ocrCanvas: optional high-contrast grayscale copy optimized for Portuguese Tesseract OCR
  */
-async function renderPageCanvasForOcr(
+async function renderPageCanvases(
   pdfDoc: pdfjsLib.PDFDocumentProxy,
   pageNumber: number,
-  cropBottomWatermark: boolean
-): Promise<HTMLCanvasElement> {
+  cropBottomWatermark: boolean,
+  buildOcrCopy: boolean,
+  targetWidth = 1650
+): Promise<{
+  colorCanvas: HTMLCanvasElement;
+  ocrCanvas?: HTMLCanvasElement;
+  viewport: ReturnType<pdfjsLib.PDFPageProxy['getViewport']>;
+}> {
   const page = await pdfDoc.getPage(pageNumber);
   const baseViewport = page.getViewport({ scale: 1 });
-  // Aim for ~1650px width for crisp Portuguese diacritics (á, ã, ç, ê, ó) without excess memory
-  const scale = Math.min(2.3, Math.max(1.5, 1650 / Math.max(baseViewport.width, 400)));
+  const scale = Math.min(2.3, Math.max(1.35, targetWidth / Math.max(baseViewport.width, 400)));
   const viewport = page.getViewport({ scale });
 
   const fullCanvas = document.createElement('canvas');
@@ -290,9 +306,8 @@ async function renderPageCanvasForOcr(
   fullCanvas.height = Math.round(viewport.height);
 
   const ctx = fullCanvas.getContext('2d', { willReadFrequently: true });
-  if (!ctx) throw new Error('Canvas 2D indisponível para OCR');
+  if (!ctx) throw new Error('Canvas 2D indisponível');
 
-  // White paper background before rendering PDF page
   ctx.fillStyle = '#ffffff';
   ctx.fillRect(0, 0, fullCanvas.width, fullCanvas.height);
 
@@ -302,23 +317,33 @@ async function renderPageCanvasForOcr(
     viewport,
   }).promise;
 
-  // Crop off bottom 5.8% strip when CamScanner / scanner footer watermark is present
   const finalHeight = cropBottomWatermark
     ? Math.round(fullCanvas.height * 0.942)
     : fullCanvas.height;
 
-  const targetCanvas = document.createElement('canvas');
-  targetCanvas.width = fullCanvas.width;
-  targetCanvas.height = finalHeight;
-  const tCtx = targetCanvas.getContext('2d', { willReadFrequently: true })!;
-  tCtx.drawImage(fullCanvas, 0, 0, fullCanvas.width, finalHeight, 0, 0, fullCanvas.width, finalHeight);
+  const colorCanvas = document.createElement('canvas');
+  colorCanvas.width = fullCanvas.width;
+  colorCanvas.height = finalHeight;
+  const cCtx = colorCanvas.getContext('2d', { willReadFrequently: true })!;
+  cCtx.drawImage(fullCanvas, 0, 0, fullCanvas.width, finalHeight, 0, 0, fullCanvas.width, finalHeight);
 
-  // High-contrast grayscale stretch: clears gray CamScanner paper shadows while keeping ink razor-sharp
-  const imgData = tCtx.getImageData(0, 0, targetCanvas.width, targetCanvas.height);
+  fullCanvas.width = 0;
+  fullCanvas.height = 0;
+
+  if (!buildOcrCopy) {
+    return { colorCanvas, viewport };
+  }
+
+  const ocrCanvas = document.createElement('canvas');
+  ocrCanvas.width = colorCanvas.width;
+  ocrCanvas.height = colorCanvas.height;
+  const oCtx = ocrCanvas.getContext('2d', { willReadFrequently: true })!;
+  oCtx.drawImage(colorCanvas, 0, 0);
+
+  const imgData = oCtx.getImageData(0, 0, ocrCanvas.width, ocrCanvas.height);
   const d = imgData.data;
   for (let i = 0; i < d.length; i += 4) {
     const gray = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-    // Contrast curve: push light paper grays (>188) to pure white, darken ink (<125)
     let boosted = (gray - 128) * 1.48 + 136;
     if (boosted > 235) boosted = 255;
     if (boosted < 22) boosted = 0;
@@ -327,13 +352,306 @@ async function renderPageCanvasForOcr(
     d[i + 1] = v;
     d[i + 2] = v;
   }
-  tCtx.putImageData(imgData, 0, 0);
+  oCtx.putImageData(imgData, 0, 0);
 
-  // Release temporary full canvas
-  fullCanvas.width = 0;
-  fullCanvas.height = 0;
+  return { colorCanvas, ocrCanvas, viewport };
+}
 
-  return targetCanvas;
+/**
+ * Checks whether a digital PDF page contains embedded raster images or dense vector schematics
+ * worth cropping out as visual illustrations.
+ */
+async function digitalPageHasGraphics(
+  pdfDoc: pdfjsLib.PDFDocumentProxy,
+  pageNumber: number
+): Promise<boolean> {
+  try {
+    const page = await pdfDoc.getPage(pageNumber);
+    const opList = await page.getOperatorList();
+    const OPS = pdfjsLib.OPS;
+    let vectorPaths = 0;
+    for (const fn of opList.fnArray) {
+      if (
+        fn === OPS.paintImageXObject ||
+        fn === OPS.paintInlineImageXObject ||
+        fn === OPS.paintImageXObjectRepeat ||
+        fn === OPS.paintXObject
+      ) {
+        return true;
+      }
+      if (fn === OPS.constructPath || fn === OPS.stroke || fn === OPS.fill || fn === OPS.eoFill) {
+        vectorPaths += 1;
+        if (vectorPaths >= 24) return true;
+      }
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Projects native PDF text items onto rendered Canvas pixel rectangles so our figure detector
+ * masks out text paragraphs cleanly and isolates only diagrams, schematics, and photos.
+ */
+async function extractNativeTextPixelBoxes(
+  pdfDoc: pdfjsLib.PDFDocumentProxy,
+  pageNumber: number,
+  viewport: ReturnType<pdfjsLib.PDFPageProxy['getViewport']>
+): Promise<PixelBox[]> {
+  const page = await pdfDoc.getPage(pageNumber);
+  const tc = await page.getTextContent();
+  const boxes: PixelBox[] = [];
+
+  for (const item of tc.items) {
+    if (!('str' in item) || !item.str.trim()) continue;
+    const tx = pdfjsLib.Util.transform(viewport.transform, item.transform);
+    const fontH = Math.max(8, Math.hypot(tx[2], tx[3]) || Math.hypot(tx[0], tx[1]));
+    const w = Math.max(fontH * 0.6, (item.width || 0) * viewport.scale);
+    const x0 = tx[4];
+    const y1 = tx[5];
+    const y0 = y1 - fontH * 1.1;
+    boxes.push({ x0, y0, x1: x0 + w, y1: y1 + fontH * 0.25, text: item.str.trim() });
+  }
+  return boxes;
+}
+
+/**
+ * Smart Non-Text Visual Region Detector & Cropper:
+ * Isolates real illustrations, photos, charts, and vector schematics on any rendered PDF page
+ * by masking out known text lines and finding dense non-paper connected regions.
+ */
+function extractIllustrationsFromCanvas(
+  colorCanvas: HTMLCanvasElement,
+  textBoxes: PixelBox[],
+  pageNumber: number,
+  maxFiguresForPage = 2
+): TopicVisual[] {
+  const W = colorCanvas.width;
+  const H = colorCanvas.height;
+  if (W < 180 || H < 180) return [];
+
+  const ctx = colorCanvas.getContext('2d', { willReadFrequently: true });
+  if (!ctx) return [];
+  const data = ctx.getImageData(0, 0, W, H).data;
+
+  // Estimate paper background luminance from sampled interior pixels (75th percentile = paper)
+  const samples: number[] = [];
+  const stepX = Math.max(8, Math.floor(W / 40));
+  const stepY = Math.max(8, Math.floor(H / 40));
+  for (let y = Math.floor(H * 0.05); y < Math.floor(H * 0.95); y += stepY) {
+    for (let x = Math.floor(W * 0.05); x < Math.floor(W * 0.95); x += stepX) {
+      const idx = (y * W + x) * 4;
+      samples.push(0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2]);
+    }
+  }
+  samples.sort((a, b) => a - b);
+  const paperLum = samples.length ? samples[Math.floor(samples.length * 0.78)] : 240;
+
+  const COLS = 36;
+  const ROWS = 48;
+  const cellW = W / COLS;
+  const cellH = H / ROWS;
+
+  // Mark cells covered by confirmed body text lines (exclude short figure labels inside diagrams)
+  const textMask = new Uint8Array(COLS * ROWS);
+  for (const box of textBoxes) {
+    const bw = box.x1 - box.x0;
+    const bh = box.y1 - box.y0;
+    if (bw < 6 || bh < 6) continue;
+    const padX = 4;
+    const padY = 3;
+    const c0 = Math.max(0, Math.floor((box.x0 - padX) / cellW));
+    const c1 = Math.min(COLS - 1, Math.floor((box.x1 + padX) / cellW));
+    const r0 = Math.max(0, Math.floor((box.y0 - padY) / cellH));
+    const r1 = Math.min(ROWS - 1, Math.floor((box.y1 + padY) / cellH));
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        textMask[r * COLS + c] = 1;
+      }
+    }
+  }
+
+  // Measure non-paper visual ink/color density in every unmasked interior cell
+  const activeGrid = new Uint8Array(COLS * ROWS);
+  for (let r = 1; r < ROWS - 1; r++) {
+    for (let c = 1; c < COLS - 1; c++) {
+      if (textMask[r * COLS + c]) continue;
+      const xStart = Math.floor(c * cellW);
+      const yStart = Math.floor(r * cellH);
+      const xEnd = Math.min(W, Math.floor((c + 1) * cellW));
+      const yEnd = Math.min(H, Math.floor((r + 1) * cellH));
+
+      let total = 0;
+      let ink = 0;
+      for (let y = yStart; y < yEnd; y += 2) {
+        for (let x = xStart; x < xEnd; x += 2) {
+          const idx = (y * W + x) * 4;
+          const rv = data[idx];
+          const gv = data[idx + 1];
+          const bv = data[idx + 2];
+          const lum = 0.299 * rv + 0.587 * gv + 0.114 * bv;
+          const chroma = Math.max(rv, gv, bv) - Math.min(rv, gv, bv);
+          total += 1;
+          if (paperLum - lum > 32 || chroma > 34) {
+            ink += 1;
+          }
+        }
+      }
+      if (total > 0 && ink / total >= 0.085) {
+        activeGrid[r * COLS + c] = 1;
+      }
+    }
+  }
+
+  // 1-cell morphological closing (bridges thin whitespace gaps inside vector diagrams/charts)
+  const bridged = new Uint8Array(activeGrid);
+  for (let r = 1; r < ROWS - 1; r++) {
+    for (let c = 1; c < COLS - 1; c++) {
+      const i = r * COLS + c;
+      if (activeGrid[i] || textMask[i]) continue;
+      const horiz = activeGrid[i - 1] && activeGrid[i + 1];
+      const vert = activeGrid[i - COLS] && activeGrid[i + COLS];
+      if (horiz || vert) bridged[i] = 1;
+    }
+  }
+
+  // Flood-fill 8-connected components to obtain distinct candidate illustration rectangles
+  const visited = new Uint8Array(COLS * ROWS);
+  const candidates: Array<{
+    c0: number;
+    r0: number;
+    c1: number;
+    r1: number;
+    cellCount: number;
+  }> = [];
+
+  const dirs = [
+    [-1, -1], [0, -1], [1, -1],
+    [-1, 0],           [1, 0],
+    [-1, 1],  [0, 1],  [1, 1],
+  ];
+
+  for (let r = 1; r < ROWS - 1; r++) {
+    for (let c = 1; c < COLS - 1; c++) {
+      const startIdx = r * COLS + c;
+      if (!bridged[startIdx] || visited[startIdx]) continue;
+
+      const queue: Array<[number, number]> = [[c, r]];
+      visited[startIdx] = 1;
+      let c0 = c;
+      let c1 = c;
+      let r0 = r;
+      let r1 = r;
+      let cellCount = 0;
+
+      while (queue.length > 0) {
+        const [cc, cr] = queue.pop()!;
+        cellCount += 1;
+        if (cc < c0) c0 = cc;
+        if (cc > c1) c1 = cc;
+        if (cr < r0) r0 = cr;
+        if (cr > r1) r1 = cr;
+
+        for (const [dc, dr] of dirs) {
+          const nc = cc + dc;
+          const nr = cr + dr;
+          if (nc < 1 || nc >= COLS - 1 || nr < 1 || nr >= ROWS - 1) continue;
+          const ni = nr * COLS + nc;
+          if (bridged[ni] && !visited[ni]) {
+            visited[ni] = 1;
+            queue.push([nc, nr]);
+          }
+        }
+      }
+
+      const wFrac = (c1 - c0 + 1) / COLS;
+      const hFrac = (r1 - r0 + 1) / ROWS;
+      const areaFrac = wFrac * hFrac;
+      const fillRatio = cellCount / ((c1 - c0 + 1) * (r1 - r0 + 1));
+
+      // Keep substantial real illustrations/diagrams; reject tiny noise specks or full-page scan shadows
+      if (
+        wFrac >= 0.14 &&
+        hFrac >= 0.08 &&
+        areaFrac >= 0.032 &&
+        areaFrac <= 0.72 &&
+        fillRatio >= 0.24
+      ) {
+        candidates.push({ c0, r0, c1, r1, cellCount });
+      }
+    }
+  }
+
+  candidates.sort((a, b) => b.cellCount - a.cellCount);
+  const picked = candidates.slice(0, maxFiguresForPage);
+  const visuals: TopicVisual[] = [];
+
+  for (let idx = 0; idx < picked.length; idx++) {
+    const comp = picked[idx];
+    const padX = Math.round(cellW * 0.45);
+    const padY = Math.round(cellH * 0.45);
+    const sx = Math.max(0, Math.floor(comp.c0 * cellW) - padX);
+    const sy = Math.max(0, Math.floor(comp.r0 * cellH) - padY);
+    const ex = Math.min(W, Math.ceil((comp.c1 + 1) * cellW) + padX);
+    const ey = Math.min(H, Math.ceil((comp.r1 + 1) * cellH) + padY);
+    const cw = ex - sx;
+    const ch = ey - sy;
+    if (cw < 80 || ch < 60) continue;
+
+    // Resize cleanly to max 620px width for crisp mobile display & tiny 3G/4G size (~15-30KB)
+    const maxOutW = 620;
+    const ratio = cw > maxOutW ? maxOutW / cw : 1;
+    const outW = Math.round(cw * ratio);
+    const outH = Math.round(ch * ratio);
+
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = outW;
+    cropCanvas.height = outH;
+    const cropCtx = cropCanvas.getContext('2d')!;
+    cropCtx.fillStyle = '#fcf8ee';
+    cropCtx.fillRect(0, 0, outW, outH);
+    cropCtx.drawImage(colorCanvas, sx, sy, cw, ch, 0, 0, outW, outH);
+
+    // Prefer compact WebP, fallback to JPEG
+    let imageDataUrl = cropCanvas.toDataURL('image/webp', 0.78);
+    if (!imageDataUrl.startsWith('data:image/webp')) {
+      imageDataUrl = cropCanvas.toDataURL('image/jpeg', 0.76);
+    }
+    cropCanvas.width = 0;
+    cropCanvas.height = 0;
+
+    // Detect nearby caption text immediately below the figure
+    const captionLines = textBoxes
+      .filter(
+        (b) =>
+          b.text &&
+          b.y0 >= ey - 10 &&
+          b.y0 <= ey + H * 0.14 &&
+          b.x1 >= sx - 30 &&
+          b.x0 <= ex + 30 &&
+          !isScannerWatermark(b.text)
+      )
+      .sort((a, b) => a.y0 - b.y0)
+      .slice(0, 3)
+      .map((b) => b.text!.trim());
+
+    const rawCaption = captionLines.join(' ').replace(/-\s+/g, '').replace(/\s+/g, ' ').trim();
+    const caption = rawCaption.length >= 12 && rawCaption.length <= 210 ? rawCaption : undefined;
+
+    visuals.push({
+      id: `fig-p${pageNumber}-${idx + 1}`,
+      kind: 'extracted_figure',
+      pageNumber,
+      title: `Ilustração · Página ${pageNumber}`,
+      caption,
+      imageDataUrl,
+      width: outW,
+      height: outH,
+    });
+  }
+
+  return visuals;
 }
 
 /**
@@ -696,9 +1014,16 @@ export async function dissectPdfForAdmin(
   const endPage = Math.max(startPage, Math.min(totalPages, options.endPage ?? totalPages));
   const pageCountToProcess = endPage - startPage + 1;
 
-  // Pass 1: Extract native non-watermark text layer and detect scanned pages
-  const rawPages: Array<{ pageNumber: number; lines: RawTextLine[]; needsOcr: boolean }> = [];
+  // Pass 1: Extract native non-watermark text layer, detect scanned pages, and crop real diagrams on digital pages
+  const rawPages: Array<{
+    pageNumber: number;
+    lines: RawTextLine[];
+    needsOcr: boolean;
+    figures: TopicVisual[];
+  }> = [];
   let anyWatermarkDetected = Boolean(options.stripBottomWatermark);
+  let totalExtractedFigures = 0;
+  const MAX_TOTAL_FIGURES = 24;
 
   for (let p = startPage; p <= endPage; p++) {
     const { cleanLines, detectedWatermark } = await extractNativePageLines(pdfDoc, p);
@@ -706,7 +1031,36 @@ export async function dissectPdfForAdmin(
 
     const cleanCharCount = cleanLines.reduce((acc, l) => acc + l.text.length, 0);
     const needsOcr = cleanCharCount < 50;
-    rawPages.push({ pageNumber: p, lines: cleanLines, needsOcr });
+    let figures: TopicVisual[] = [];
+
+    // On digital native-text pages that contain embedded raster images or vector schematics, crop them cleanly!
+    if (!needsOcr && totalExtractedFigures < MAX_TOTAL_FIGURES) {
+      const hasGraphics = await digitalPageHasGraphics(pdfDoc, p);
+      if (hasGraphics) {
+        const { colorCanvas, viewport } = await renderPageCanvases(
+          pdfDoc,
+          p,
+          Boolean(detectedWatermark),
+          false,
+          1350
+        );
+        try {
+          const textBoxes = await extractNativeTextPixelBoxes(pdfDoc, p, viewport);
+          figures = extractIllustrationsFromCanvas(
+            colorCanvas,
+            textBoxes,
+            p,
+            Math.min(2, MAX_TOTAL_FIGURES - totalExtractedFigures)
+          );
+          totalExtractedFigures += figures.length;
+        } finally {
+          colorCanvas.width = 0;
+          colorCanvas.height = 0;
+        }
+      }
+    }
+
+    rawPages.push({ pageNumber: p, lines: cleanLines, needsOcr, figures });
 
     const doneIdx = p - startPage + 1;
     if (doneIdx % 4 === 0 || p === endPage) {
@@ -715,12 +1069,12 @@ export async function dissectPdfForAdmin(
         percent: Math.round(4 + (doneIdx / pageCountToProcess) * 14),
         currentPage: p,
         totalPages: endPage,
-        detail: `A analisar camada de texto (página ${p} de ${endPage})…`,
+        detail: `A analisar texto e ilustrações (página ${p} de ${endPage})…`,
       });
     }
   }
 
-  // Pass 2: Automatic Portuguese OCR for scanned/photographed pages (CamScanner, etc.)
+  // Pass 2: Automatic Portuguese OCR + Figure Extraction for scanned/photographed pages (CamScanner, etc.)
   const pagesNeedingOcr = rawPages.filter((rp) => rp.needsOcr);
   let ocrSuccessCount = 0;
 
@@ -728,7 +1082,7 @@ export async function dissectPdfForAdmin(
     onProgress?.({
       stage: 'ocr',
       percent: 20,
-      detail: `A inicializar motor OCR em Português para ${pagesNeedingOcr.length} páginas digitalizadas…`,
+      detail: `A inicializar OCR em Português e extração de ilustrações para ${pagesNeedingOcr.length} páginas…`,
     });
 
     const { createScheduler, createWorker } = await import('tesseract.js');
@@ -743,22 +1097,24 @@ export async function dissectPdfForAdmin(
 
       let completedOcr = 0;
 
-      // Render canvases sequentially (pdfjs canvas pool) in small batches of workerCount and run OCR in parallel
       for (let i = 0; i < pagesNeedingOcr.length; i += workerCount) {
         const chunk = pagesNeedingOcr.slice(i, i + workerCount);
         const rendered = await Promise.all(
           chunk.map(async (rp) => ({
             rp,
-            canvas: await renderPageCanvasForOcr(pdfDoc, rp.pageNumber, anyWatermarkDetected),
+            canvases: await renderPageCanvases(pdfDoc, rp.pageNumber, anyWatermarkDetected, true, 1650),
           }))
         );
 
         await Promise.all(
-          rendered.map(async ({ rp, canvas }) => {
+          rendered.map(async ({ rp, canvases }) => {
+            const { colorCanvas, ocrCanvas } = canvases;
             try {
-              const res = await scheduler.addJob('recognize', canvas, {}, { blocks: true });
+              const res = await scheduler.addJob('recognize', ocrCanvas!, {}, { blocks: true });
+              const rawBlocks =
+                (res.data.blocks as Parameters<typeof parseTesseractBlocksToLines>[0]) ?? null;
               const ocrLines = parseTesseractBlocksToLines(
-                (res.data.blocks as Parameters<typeof parseTesseractBlocksToLines>[0]) ?? null,
+                rawBlocks,
                 res.data.text || '',
                 rp.pageNumber
               );
@@ -766,6 +1122,39 @@ export async function dissectPdfForAdmin(
                 rp.lines = ocrLines;
                 ocrSuccessCount += 1;
               }
+
+              // Extract real cropped figures/diagrams from the natural colorCanvas using OCR text masks
+              if (totalExtractedFigures < MAX_TOTAL_FIGURES) {
+                const ocrTextBoxes: PixelBox[] = [];
+                for (const b of rawBlocks || []) {
+                  for (const p of b.paragraphs || []) {
+                    for (const l of p.lines || []) {
+                      const lt = l.text.trim();
+                      const alpha = (lt.match(/[A-Za-zÁÀÂÃÉÊÍÓÔÕÚÇáàâãéêíóôõúç]/g) || []).length;
+                      if (l.confidence >= 50 && alpha >= 5 && !isScannerWatermark(lt)) {
+                        ocrTextBoxes.push({
+                          x0: l.bbox.x0,
+                          y0: l.bbox.y0,
+                          x1: l.bbox.x1,
+                          y1: l.bbox.y1,
+                          text: lt,
+                        });
+                      }
+                    }
+                  }
+                }
+                const pageFigs = extractIllustrationsFromCanvas(
+                  colorCanvas,
+                  ocrTextBoxes,
+                  rp.pageNumber,
+                  Math.min(2, MAX_TOTAL_FIGURES - totalExtractedFigures)
+                );
+                if (pageFigs.length > 0) {
+                  rp.figures = pageFigs;
+                  totalExtractedFigures += pageFigs.length;
+                }
+              }
+
               completedOcr += 1;
 
               const snippet = ocrLines
@@ -779,12 +1168,16 @@ export async function dissectPdfForAdmin(
                 percent: Math.round(22 + (completedOcr / pagesNeedingOcr.length) * 48),
                 currentPage: rp.pageNumber,
                 totalPages: endPage,
-                detail: `OCR em Português: página ${rp.pageNumber} (${completedOcr} de ${pagesNeedingOcr.length})…`,
+                detail: `OCR + Ilustrações: página ${rp.pageNumber} (${completedOcr} de ${pagesNeedingOcr.length})…`,
                 ocrSnippet: snippet || undefined,
               });
             } finally {
-              canvas.width = 0;
-              canvas.height = 0;
+              colorCanvas.width = 0;
+              colorCanvas.height = 0;
+              if (ocrCanvas) {
+                ocrCanvas.width = 0;
+                ocrCanvas.height = 0;
+              }
             }
           })
         );
@@ -848,13 +1241,14 @@ export async function dissectPdfForAdmin(
       headings,
       rawText,
       usedOcr: rp.needsOcr && rp.lines.length > 0,
+      figures: rp.figures,
     });
   }
 
   onProgress?.({
     stage: 'structuring',
     percent: 76,
-    detail: 'A segmentar temas curriculares com páginas exatas…',
+    detail: 'A segmentar temas curriculares com páginas e ilustrações exatas…',
   });
 
   interface Draft {
@@ -864,6 +1258,7 @@ export async function dissectPdfForAdmin(
     pageEnd: number;
     paragraphs: string[];
     pages: TopicPage[];
+    visuals: TopicVisual[];
     usedOcr: boolean;
   }
 
@@ -892,6 +1287,7 @@ export async function dissectPdfForAdmin(
           pageEnd: ep.pageNumber,
           paragraphs: [...paras],
           pages: paras.length ? [{ pageNumber: ep.pageNumber, paragraphs: paras }] : [],
+          visuals: [...ep.figures],
           usedOcr: ep.usedOcr,
         };
         continue;
@@ -908,13 +1304,14 @@ export async function dissectPdfForAdmin(
           pageEnd: ep.pageNumber,
           paragraphs: [...paras],
           pages: paras.length ? [{ pageNumber: ep.pageNumber, paragraphs: paras }] : [],
+          visuals: [...ep.figures],
           usedOcr: ep.usedOcr,
         };
         continue;
       }
     }
 
-    if (paras.length === 0) continue;
+    if (paras.length === 0 && ep.figures.length === 0) continue;
 
     if (!active) {
       active = {
@@ -923,7 +1320,8 @@ export async function dissectPdfForAdmin(
         pageNumber: ep.pageNumber,
         pageEnd: ep.pageNumber,
         paragraphs: [...paras],
-        pages: [{ pageNumber: ep.pageNumber, paragraphs: paras }],
+        pages: paras.length ? [{ pageNumber: ep.pageNumber, paragraphs: paras }] : [],
+        visuals: [...ep.figures],
         usedOcr: ep.usedOcr,
       };
     } else if (ep.pageNumber - active.pageNumber >= 3 && active.paragraphs.join(' ').length >= 1400) {
@@ -937,13 +1335,15 @@ export async function dissectPdfForAdmin(
         pageNumber: ep.pageNumber,
         pageEnd: ep.pageNumber,
         paragraphs: [...paras],
-        pages: [{ pageNumber: ep.pageNumber, paragraphs: paras }],
+        pages: paras.length ? [{ pageNumber: ep.pageNumber, paragraphs: paras }] : [],
+        visuals: [...ep.figures],
         usedOcr: ep.usedOcr,
       };
     } else {
       active.pageEnd = ep.pageNumber;
       active.paragraphs.push(...paras);
-      active.pages.push({ pageNumber: ep.pageNumber, paragraphs: paras });
+      if (paras.length) active.pages.push({ pageNumber: ep.pageNumber, paragraphs: paras });
+      if (ep.figures.length) active.visuals.push(...ep.figures);
       active.usedOcr = active.usedOcr || ep.usedOcr;
     }
   }
@@ -981,6 +1381,7 @@ export async function dissectPdfForAdmin(
       keywords,
       paragraphs: d.paragraphs,
       pages: d.pages,
+      visuals: d.visuals,
       readingMinutes: Math.max(1, Math.round(wc / 180)),
       sourceWasOcr: d.usedOcr,
     };
@@ -994,6 +1395,7 @@ export async function dissectPdfForAdmin(
       textPages,
       ocrPages: ocrSuccessCount,
       emptyPages,
+      figuresCount: totalExtractedFigures,
       topicsCount: topics.length,
       totalWords,
     },

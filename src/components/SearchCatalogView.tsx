@@ -3,6 +3,7 @@ import {
   Bookmark,
   BookOpen,
   CheckCircle2,
+  Layers,
   Lock,
   LogOut,
   Search,
@@ -341,12 +342,23 @@ export function SearchCatalogView({
                       {highlightMatch(topic.summaryHalfParagraph, query)}
                     </p>
 
-                    {/* Footer: Reading time + Unlock/Offline status */}
+                    {/* Footer: Reading time + Visuals badge + Unlock/Offline status */}
                     <div className="mt-4 pt-3 border-t border-sand/75 flex flex-wrap items-center justify-between gap-2">
-                      <span className="text-[12px] text-ink-muted tabular-nums">
-                        {topic.readingMinutes} min de estudo · {topic.curriculumTopicsCount}{' '}
-                        {topic.curriculumTopicsCount === 1 ? 'tema' : 'temas'}
-                      </span>
+                      <div className="flex flex-wrap items-center gap-2 text-[12px] text-ink-muted tabular-nums">
+                        <span>
+                          {topic.readingMinutes} min · {topic.curriculumTopicsCount}{' '}
+                          {topic.curriculumTopicsCount === 1 ? 'tema' : 'temas'}
+                        </span>
+                        {topic.visualsCount > 0 && (
+                          <span className="inline-flex items-center gap-1 rounded-full bg-parchment border border-sand px-2 py-0.5 text-[11px] font-semibold text-forest">
+                            <Layers className="w-3 h-3 text-amber" aria-hidden="true" />
+                            <span>
+                              {topic.visualsCount}{' '}
+                              {topic.visualsCount === 1 ? 'esquema' : 'esquemas'}
+                            </span>
+                          </span>
+                        )}
+                      </div>
 
                       {topic.unlocked ? (
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-forest/10 text-forest px-3 py-1 text-[12px] font-bold">

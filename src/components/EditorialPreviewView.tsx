@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowLeft, BookOpen, Check, Lock, ShieldCheck, Sparkles } from 'lucide-react';
+import { ArrowLeft, BookOpen, Check, Layers, Lock, ShieldCheck, Sparkles } from 'lucide-react';
 import { fetchCurriculumPreview } from '../lib/apiClient';
 import type { PreviewCurriculumInfo, TopicSearchItem } from '../types/folio';
 
@@ -73,13 +73,25 @@ export function EditorialPreviewView({
             {topic.title}
           </h1>
 
-          <p className="mt-2 text-[13px] text-ink-muted flex items-center gap-3">
+          <p className="mt-2 text-[13px] text-ink-muted flex flex-wrap items-center gap-2.5">
             <span className="inline-flex items-center gap-1">
               <BookOpen className="w-3.5 h-3.5 text-forest" aria-hidden="true" />
               Pré-visualização gratuita
             </span>
             <span>·</span>
             <span className="tabular-nums">{topic.readingMinutes} min de estudo</span>
+            {topic.visualsCount > 0 && (
+              <>
+                <span>·</span>
+                <span className="inline-flex items-center gap-1 font-semibold text-forest">
+                  <Layers className="w-3.5 h-3.5 text-amber" aria-hidden="true" />
+                  <span>
+                    Inclui {topic.visualsCount}{' '}
+                    {topic.visualsCount === 1 ? 'esquema ilustrativo' : 'esquemas e ilustrações'}
+                  </span>
+                </span>
+              </>
+            )}
           </p>
         </div>
 
