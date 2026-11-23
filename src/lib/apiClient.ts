@@ -59,6 +59,48 @@ function authHeaders(extra?: Record<string, string>): Record<string, string> {
   return headers;
 }
 
+function isTimeoutError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false;
+  const name = (err as { name?: string }).name || '';
+  const msg = (err as { message?: string }).message || '';
+  return name === 'TimeoutError' || name === 'AbortError' || /timed?\s*out/i.test(msg);
+}
+
+/**
+ * Resilient fetch optimized for slower mobile/3G/4G links & CockroachDB cold starts:
+ * generous timeout, optional silent retry on GET reads, and clean Portuguese error messages.
+ */
+async function resilientFetch(
+  input: string,
+  init: RequestInit,
+  timeoutMs: number,
+  retries = 0
+): Promise<Response> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    try {
+      return await fetch(input, {
+        ...init,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (err) {
+      lastErr = err;
+      if (attempt < retries && isTimeoutError(err)) {
+        await new Promise((r) => setTimeout(r, 450));
+        continue;
+      }
+      break;
+    }
+  }
+
+  if (isTimeoutError(lastErr)) {
+    throw new Error(
+      'A ligação demorou mais do que o esperado (rede lenta). Tenta novamente.'
+    );
+  }
+  throw new Error('Sem ligação ao servidor neste momento. Verifica a internet e tenta novamente.');
+}
+
 async function parseJsonSafe<T>(res: Response): Promise<T & { error?: string; code?: string }> {
   try {
     return (await res.json()) as T & { error?: string; code?: string };
@@ -102,10 +144,12 @@ export async function fetchTopics(
   if (cycle !== 'all') params.set('cycle', cycle);
 
   const hadToken = Boolean(getStoredToken());
-  const res = await fetch(`/api/topics?${params.toString()}`, {
-    headers: authHeaders(),
-    signal: AbortSignal.timeout(8000),
-  });
+  const res = await resilientFetch(
+    `/api/topics?${params.toString()}`,
+    { headers: authHeaders() },
+    25000,
+    1
+  );
   inspectForRevocation(res, hadToken);
   const data = await parseJsonSafe<{ topics?: TopicSearchItem[]; totalCurricula?: number }>(res);
   if (!res.ok) throw new Error(data.error || 'Não foi possível pesquisar matérias.');
@@ -117,9 +161,12 @@ export async function fetchTopics(
 
 export async function fetchCurriculumPreview(curriculumId: string): Promise<PreviewCurriculumInfo | null> {
   try {
-    const res = await fetch(`/api/curricula/${encodeURIComponent(curriculumId)}/preview`, {
-      signal: AbortSignal.timeout(6000),
-    });
+    const res = await resilientFetch(
+      `/api/curricula/${encodeURIComponent(curriculumId)}/preview`,
+      {},
+      18000,
+      1
+    );
     if (!res.ok) return null;
     const data = await parseJsonSafe<{ curriculum?: PreviewCurriculumInfo }>(res);
     return data.curriculum ?? null;
@@ -132,12 +179,15 @@ export async function fetchCurriculumPreview(curriculumId: string): Promise<Prev
 // NATIVE AUTHENTICATION (CockroachDB + Bcrypt + Strict 1-Device Session)
 // ============================================================================
 export async function registerAccount(email: string, password: string): Promise<AuthSessionState> {
-  const res = await fetch('/api/auth/register', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-    signal: AbortSignal.timeout(10000),
-  });
+  const res = await resilientFetch(
+    '/api/auth/register',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    },
+    25000
+  );
   const data = await parseJsonSafe<AuthSessionState>(res);
   if (!res.ok || !data.token) {
     throw new Error(data.error || 'Não foi possível criar a conta.');
@@ -147,12 +197,15 @@ export async function registerAccount(email: string, password: string): Promise<
 }
 
 export async function loginAccount(email: string, password: string): Promise<AuthSessionState> {
-  const res = await fetch('/api/auth/login', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email, password }),
-    signal: AbortSignal.timeout(10000),
-  });
+  const res = await resilientFetch(
+    '/api/auth/login',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password }),
+    },
+    25000
+  );
   const data = await parseJsonSafe<AuthSessionState>(res);
   if (!res.ok || !data.token) {
     throw new Error(data.error || 'E-mail ou senha incorretos.');
@@ -165,10 +218,7 @@ export async function fetchCurrentSession(): Promise<AuthSessionState | null> {
   const token = getStoredToken();
   if (!token) return null;
   try {
-    const res = await fetch('/api/auth/me', {
-      headers: authHeaders(),
-      signal: AbortSignal.timeout(6000),
-    });
+    const res = await resilientFetch('/api/auth/me', { headers: authHeaders() }, 20000, 1);
     const data = await parseJsonSafe<Omit<AuthSessionState, 'token'>>(res);
     if (res.status === 401) {
       notifySessionRevoked(data.error || DEFAULT_REVOKED_MSG);
@@ -192,7 +242,7 @@ export async function verifyActiveSession(): Promise<'valid' | 'revoked' | 'offl
   try {
     const res = await fetch('/api/auth/me', {
       headers: authHeaders(),
-      signal: AbortSignal.timeout(5000),
+      signal: AbortSignal.timeout(12000),
     });
     if (res.status === 401) {
       const data = await parseJsonSafe<Record<string, unknown>>(res);
@@ -210,7 +260,7 @@ export async function logoutAccount(): Promise<void> {
     await fetch('/api/auth/logout', {
       method: 'POST',
       headers: authHeaders(),
-      signal: AbortSignal.timeout(4000),
+      signal: AbortSignal.timeout(5000),
     });
   } catch {
     // ignore network error on logout
@@ -228,12 +278,15 @@ export async function unlockCurriculum(
   phone: string
 ): Promise<{ receipt: UnlockReceipt; alreadyUnlocked?: boolean }> {
   const hadToken = Boolean(getStoredToken());
-  const res = await fetch('/api/unlocks', {
-    method: 'POST',
-    headers: authHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({ curriculumId, provider, phone }),
-    signal: AbortSignal.timeout(12000),
-  });
+  const res = await resilientFetch(
+    '/api/unlocks',
+    {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({ curriculumId, provider, phone }),
+    },
+    25000
+  );
   const data = await parseJsonSafe<{ receipt?: UnlockReceipt; alreadyUnlocked?: boolean }>(res);
   inspectForRevocation(res, hadToken, data.error);
   if (!res.ok || !data.receipt) {
@@ -244,10 +297,7 @@ export async function unlockCurriculum(
 
 export async function fetchMySubjects(): Promise<MySubjectOverview[]> {
   const hadToken = Boolean(getStoredToken());
-  const res = await fetch('/api/my-subjects', {
-    headers: authHeaders(),
-    signal: AbortSignal.timeout(8000),
-  });
+  const res = await resilientFetch('/api/my-subjects', { headers: authHeaders() }, 25000, 1);
   const data = await parseJsonSafe<{ subjects?: MySubjectOverview[] }>(res);
   inspectForRevocation(res, hadToken, data.error);
   if (!res.ok) {
@@ -260,10 +310,12 @@ export async function fetchProtectedCurriculumContent(
   curriculumId: string
 ): Promise<UnlockedCurriculum> {
   const hadToken = Boolean(getStoredToken());
-  const res = await fetch(`/api/curricula/${encodeURIComponent(curriculumId)}/content`, {
-    headers: authHeaders(),
-    signal: AbortSignal.timeout(12000),
-  });
+  const res = await resilientFetch(
+    `/api/curricula/${encodeURIComponent(curriculumId)}/content`,
+    { headers: authHeaders() },
+    30000,
+    1
+  );
   const data = await parseJsonSafe<{ curriculum?: UnlockedCurriculum }>(res);
   inspectForRevocation(res, hadToken, data.error);
   if (!res.ok || !data.curriculum) {
@@ -280,10 +332,7 @@ export async function fetchAdminDashboard(): Promise<{
   stats: AdminDashboardStats;
 }> {
   const hadToken = Boolean(getStoredToken());
-  const res = await fetch('/api/admin/curricula', {
-    headers: authHeaders(),
-    signal: AbortSignal.timeout(10000),
-  });
+  const res = await resilientFetch('/api/admin/curricula', { headers: authHeaders() }, 28000, 1);
   const data = await parseJsonSafe<{
     curricula?: AdminCurriculumOverview[];
     stats?: AdminDashboardStats;
@@ -314,12 +363,15 @@ export async function publishAdminCurriculum(payload: {
   warnings?: string[];
 }> {
   const hadToken = Boolean(getStoredToken());
-  const res = await fetch('/api/admin/curricula', {
-    method: 'POST',
-    headers: authHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify(payload),
-    signal: AbortSignal.timeout(90000),
-  });
+  const res = await resilientFetch(
+    '/api/admin/curricula',
+    {
+      method: 'POST',
+      headers: authHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify(payload),
+    },
+    180000
+  );
   const data = await parseJsonSafe<{
     published: boolean;
     curriculumId: string;
@@ -343,11 +395,14 @@ export async function reEnrichAdminCurriculum(curriculumId: string): Promise<{
   modelUsed?: string | null;
 }> {
   const hadToken = Boolean(getStoredToken());
-  const res = await fetch(`/api/admin/curricula/${encodeURIComponent(curriculumId)}/enrich`, {
-    method: 'POST',
-    headers: authHeaders(),
-    signal: AbortSignal.timeout(90000),
-  });
+  const res = await resilientFetch(
+    `/api/admin/curricula/${encodeURIComponent(curriculumId)}/enrich`,
+    {
+      method: 'POST',
+      headers: authHeaders(),
+    },
+    180000
+  );
   const data = await parseJsonSafe<{
     enrichedCount: number;
     totalCount: number;
@@ -362,11 +417,14 @@ export async function reEnrichAdminCurriculum(curriculumId: string): Promise<{
 
 export async function deleteAdminCurriculum(curriculumId: string): Promise<void> {
   const hadToken = Boolean(getStoredToken());
-  const res = await fetch(`/api/admin/curricula/${encodeURIComponent(curriculumId)}`, {
-    method: 'DELETE',
-    headers: authHeaders(),
-    signal: AbortSignal.timeout(8000),
-  });
+  const res = await resilientFetch(
+    `/api/admin/curricula/${encodeURIComponent(curriculumId)}`,
+    {
+      method: 'DELETE',
+      headers: authHeaders(),
+    },
+    20000
+  );
   if (!res.ok) {
     const data = await parseJsonSafe<Record<string, unknown>>(res);
     inspectForRevocation(res, hadToken, data.error);

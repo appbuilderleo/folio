@@ -12,7 +12,7 @@ export const pool = connectionString
       connectionString,
       max: 10,
       idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 10000,
+      connectionTimeoutMillis: 25000,
     })
   : null;
 
@@ -32,7 +32,19 @@ export async function ensureSchema(): Promise<{ connected: boolean; error?: stri
   }
 
   try {
-    // 1. Metadata table (tracks idempotent one-time seeds)
+    // Fast-path: if schema v3 is already initialized, skip all DDL round-trips (~250ms vs 8000ms!)
+    try {
+      const fastCheck = await pool.query(
+        `SELECT key FROM folio_meta WHERE key = 'schema_ready_v3' LIMIT 1`
+      );
+      if (fastCheck.rows.length > 0) {
+        return { connected: true };
+      }
+    } catch {
+      // folio_meta does not exist yet — proceed with full initialization below
+    }
+
+    // 1. Metadata table (tracks idempotent one-time seeds & schema version)
     await pool.query(`
       CREATE TABLE IF NOT EXISTS folio_meta (
         key TEXT PRIMARY KEY,
@@ -108,6 +120,7 @@ export async function ensureSchema(): Promise<{ connected: boolean; error?: stri
         full_text TEXT NOT NULL,
         pages JSONB,
         visuals JSONB NOT NULL DEFAULT '[]'::jsonb,
+        visuals_count INT NOT NULL DEFAULT 0,
         reading_minutes INT NOT NULL DEFAULT 3,
         search_normalized TEXT NOT NULL DEFAULT ''
       );
@@ -115,6 +128,9 @@ export async function ensureSchema(): Promise<{ connected: boolean; error?: stri
 
     await pool.query(`
       ALTER TABLE topics ADD COLUMN IF NOT EXISTS visuals JSONB NOT NULL DEFAULT '[]'::jsonb;
+    `);
+    await pool.query(`
+      ALTER TABLE topics ADD COLUMN IF NOT EXISTS visuals_count INT NOT NULL DEFAULT 0;
     `);
 
     await pool.query(`
@@ -149,6 +165,15 @@ export async function ensureSchema(): Promise<{ connected: boolean; error?: stri
     await seedInitialCurriculaOnce();
     // Backfill vector diagrams onto already-seeded SNE base topics if visuals are empty
     await backfillSeedVisualsOnce();
+    // Sync precomputed visuals_count so search & admin list queries never scan heavy visuals JSONB
+    await pool.query(`
+      UPDATE topics
+      SET visuals_count = jsonb_array_length(COALESCE(visuals, '[]'::jsonb))::int
+      WHERE visuals_count = 0 AND visuals IS NOT NULL AND jsonb_array_length(visuals) > 0
+    `);
+    await pool.query(
+      `INSERT INTO folio_meta (key, value) VALUES ('schema_ready_v3', 'true') ON CONFLICT (key) DO UPDATE SET value = 'true', updated_at = now()`
+    );
 
     return { connected: true };
   } catch (err) {
@@ -226,8 +251,8 @@ async function seedInitialCurriculaOnce(): Promise<void> {
           INSERT INTO topics (
             curriculum_id, topic_order, unit_label, title, page_number, page_end,
             summary_half_paragraph, preview_paragraphs, key_takeaways, keywords,
-            full_text, pages, visuals, reading_minutes, search_normalized
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13::jsonb,$14,$15)
+            full_text, pages, visuals, visuals_count, reading_minutes, search_normalized
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13::jsonb,$14,$15,$16)
           `,
           [
             curriculumId,
@@ -243,6 +268,7 @@ async function seedInitialCurriculaOnce(): Promise<void> {
             fullText,
             t.pages ? JSON.stringify(t.pages) : null,
             JSON.stringify(t.visuals || []),
+            (t.visuals || []).length,
             t.readingMinutes,
             searchNorm,
           ]
@@ -278,12 +304,12 @@ async function backfillSeedVisualsOnce(): Promise<void> {
       await pool.query(
         `
         UPDATE topics
-        SET visuals = $1::jsonb
+        SET visuals = $1::jsonb, visuals_count = $4
         WHERE curriculum_id = $2
           AND topic_order = $3
           AND (visuals IS NULL OR jsonb_array_length(visuals) = 0)
         `,
-        [JSON.stringify(t.visuals), curriculumId, i]
+        [JSON.stringify(t.visuals), curriculumId, i, t.visuals.length]
       );
     }
   }

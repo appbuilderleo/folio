@@ -475,8 +475,18 @@ export function AdminPanel() {
         )}
 
         {dashError && (
-          <div role="alert" className="rounded-2xl bg-red-50 border border-red-200 px-4 py-3 text-[13px] text-red-800">
-            {dashError}
+          <div
+            role="alert"
+            className="rounded-2xl bg-red-50 border border-red-200 px-4 py-3 flex flex-wrap items-center justify-between gap-2 text-[13px] text-red-800"
+          >
+            <span>{dashError}</span>
+            <button
+              type="button"
+              onClick={() => void loadDashboard()}
+              className="px-3 py-1.5 rounded-xl bg-red-700 text-white text-[12px] font-bold cursor-pointer hover:bg-red-800"
+            >
+              Tentar novamente
+            </button>
           </div>
         )}
 

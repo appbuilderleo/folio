@@ -218,7 +218,7 @@ apiRouter.get('/topics', attachOptionalAuth, async (req: AuthenticatedRequest, r
         t.key_takeaways,
         t.reading_minutes,
         t.search_normalized,
-        jsonb_array_length(COALESCE(t.visuals, '[]'::jsonb))::int AS visuals_count,
+        t.visuals_count,
         c.subject,
         c.grade,
         c.grade_number,
@@ -320,7 +320,7 @@ apiRouter.get('/curricula/:id/preview', async (req, res) => {
       return res.status(404).json({ error: 'Matéria não encontrada' });
     }
     const tRes = await pool.query(
-      `SELECT id, title, unit_label, page_number, page_end, reading_minutes, jsonb_array_length(COALESCE(visuals, '[]'::jsonb))::int AS visuals_count FROM topics WHERE curriculum_id = $1 ORDER BY topic_order ASC`,
+      `SELECT id, title, unit_label, page_number, page_end, reading_minutes, visuals_count FROM topics WHERE curriculum_id = $1 ORDER BY topic_order ASC`,
       [req.params.id]
     );
 
@@ -788,8 +788,7 @@ apiRouter.get('/admin/curricula', requireAdmin, async (_req, res) => {
       pool.query(
         `
         SELECT
-          id, curriculum_id, title, page_number, summary_half_paragraph,
-          jsonb_array_length(COALESCE(visuals, '[]'::jsonb))::int AS visuals_count
+          id, curriculum_id, title, page_number, summary_half_paragraph, visuals_count
         FROM topics
         ORDER BY curriculum_id, topic_order ASC
         `
@@ -945,8 +944,8 @@ apiRouter.post('/admin/curricula', requireAdmin, async (req, res) => {
           INSERT INTO topics (
             curriculum_id, topic_order, unit_label, title, page_number, page_end,
             summary_half_paragraph, preview_paragraphs, key_takeaways, keywords,
-            full_text, pages, visuals, reading_minutes, search_normalized
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13::jsonb,$14,$15)
+            full_text, pages, visuals, visuals_count, reading_minutes, search_normalized
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13::jsonb,$14,$15,$16)
           `,
           [
             curriculumId,
@@ -962,6 +961,7 @@ apiRouter.post('/admin/curricula', requireAdmin, async (req, res) => {
             fullText,
             t.pages ? JSON.stringify(t.pages) : null,
             JSON.stringify(t.visuals || []),
+            (t.visuals || []).length,
             t.readingMinutes || 3,
             searchNorm,
           ]
@@ -1054,8 +1054,9 @@ apiRouter.post('/admin/curricula/:id/enrich', requireAdmin, async (req, res) => 
             key_takeaways = $3::jsonb,
             keywords = $4::jsonb,
             visuals = $5::jsonb,
-            search_normalized = $6
-        WHERE id = $7
+            visuals_count = $6,
+            search_normalized = $7
+        WHERE id = $8
         `,
         [
           updated.title,
@@ -1063,6 +1064,7 @@ apiRouter.post('/admin/curricula/:id/enrich', requireAdmin, async (req, res) => 
           JSON.stringify(updated.keyTakeaways),
           JSON.stringify(updated.keywords),
           JSON.stringify(updated.visuals || []),
+          (updated.visuals || []).length,
           searchNorm,
           origId,
         ]
