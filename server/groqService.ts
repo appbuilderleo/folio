@@ -264,7 +264,7 @@ async function callGroqTopicBatch(
     topics: payload,
   });
 
-  const models = getModelCascade();
+  const models = getModelCascade().slice(0, 2);
   let lastError = 'Falha ao contactar Groq';
 
   for (const model of models) {
@@ -273,7 +273,7 @@ async function callGroqTopicBatch(
         const body: Record<string, unknown> = {
           model,
           temperature: 0.2,
-          max_completion_tokens: hasOcrTopics ? 4200 : 2400,
+          max_completion_tokens: hasOcrTopics ? 3600 : 2200,
           response_format: { type: 'json_object' },
           messages: [
             { role: 'system', content: systemPrompt },
@@ -292,12 +292,12 @@ async function callGroqTopicBatch(
             'Content-Type': 'application/json',
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(28000),
+          signal: AbortSignal.timeout(5200),
         });
 
         if (res.status === 429 && attempt === 0) {
-          const retryAfter = Number(res.headers.get('retry-after') || '2');
-          await new Promise((r) => setTimeout(r, Math.min(4500, Math.max(1200, retryAfter * 1000))));
+          const retryAfter = Number(res.headers.get('retry-after') || '1');
+          await new Promise((r) => setTimeout(r, Math.min(2000, Math.max(800, retryAfter * 1000))));
           continue;
         }
 
@@ -370,34 +370,73 @@ export async function enrichTopicsWithGroq(
   const warnings: string[] = [];
   let modelUsed: string | null = null;
 
-  const limit = Math.min(topics.length, 36);
-  if (topics.length > 36) {
-    warnings.push('Os primeiros 36 temas foram resumidos pela Groq; os restantes usaram resumo base.');
+  const limit = Math.min(topics.length, 18);
+  if (topics.length > 18) {
+    warnings.push('Os primeiros 18 temas foram resumidos e enriquecidos via Groq; os restantes usaram resumos base para manter a publicação rápida.');
   }
 
+  // Build batch jobs
+  const batchJobs: Array<{ batchNum: number; batch: Array<{ index: number; topic: AdminTopicDraft }> }> = [];
   for (let i = 0; i < limit; i += batchSize) {
     const batch = [];
     for (let j = i; j < Math.min(limit, i + batchSize); j++) {
       batch.push({ index: j, topic: topics[j] });
     }
+    batchJobs.push({ batchNum: Math.floor(i / batchSize) + 1, batch });
+  }
 
-    try {
-      const { items, model } = await callGroqTopicBatch(meta, batch);
-      modelUsed = modelUsed || model;
-      for (const item of items) {
-        if (item && typeof item.index === 'number') {
-          enrichedByIndex.set(item.index, item);
+  // Parallel execution with concurrency of 3 and hard safety deadline (5.5s) to guarantee zero 504 timeouts
+  const DEADLINE_MS = 5500;
+  let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
+  const deadlinePromise = new Promise<'timeout'>((resolve) => {
+    deadlineTimer = setTimeout(() => resolve('timeout'), DEADLINE_MS);
+  });
+
+  try {
+    const CONCURRENCY = 3;
+    for (let c = 0; c < batchJobs.length; c += CONCURRENCY) {
+      const chunk = batchJobs.slice(c, c + CONCURRENCY);
+      const chunkPromises = chunk.map(async ({ batchNum, batch }) => {
+        try {
+          const { items, model } = await callGroqTopicBatch(meta, batch);
+          return { ok: true as const, batchNum, items, model };
+        } catch (err) {
+          return {
+            ok: false as const,
+            batchNum,
+            error: err instanceof Error ? err.message : String(err),
+          };
+        }
+      });
+
+      const raceResult = await Promise.race([
+        Promise.allSettled(chunkPromises),
+        deadlinePromise,
+      ]);
+
+      if (raceResult === 'timeout') {
+        warnings.push('Tempo limite de IA atingido; publicação concluída rapidamente com resumos base para os restantes temas.');
+        break;
+      }
+
+      for (const res of raceResult) {
+        if (res.status === 'fulfilled') {
+          const val = res.value;
+          if (val.ok) {
+            modelUsed = modelUsed || val.model;
+            for (const item of val.items) {
+              if (item && typeof item.index === 'number') {
+                enrichedByIndex.set(item.index, item);
+              }
+            }
+          } else if (val.error) {
+            warnings.push(`Lote ${val.batchNum}: ${val.error}`);
+          }
         }
       }
-    } catch (err) {
-      warnings.push(
-        `Lote ${Math.floor(i / batchSize) + 1}: ${err instanceof Error ? err.message : String(err)}`
-      );
     }
-
-    if (i + batchSize < limit) {
-      await new Promise((r) => setTimeout(r, 260));
-    }
+  } finally {
+    if (deadlineTimer) clearTimeout(deadlineTimer);
   }
 
   let enrichedCount = 0;
@@ -424,29 +463,29 @@ export async function enrichTopicsWithGroq(
     const keyTakeaways =
       Array.isArray(ai.keyTakeaways) && ai.keyTakeaways.length > 0
         ? ai.keyTakeaways
-            .map((k) => String(k).trim())
-            .filter((k) => k.length >= 8)
-            .slice(0, 4)
+          .map((k) => String(k).trim())
+          .filter((k) => k.length >= 8)
+          .slice(0, 4)
         : topic.keyTakeaways;
 
     const keywords =
       Array.isArray(ai.keywords) && ai.keywords.length > 0
         ? Array.from(
-            new Set(
-              [...ai.keywords.map((k) => String(k).trim().toLowerCase()), ...topic.keywords].filter(
-                (k) => k.length >= 3
-              )
+          new Set(
+            [...ai.keywords.map((k) => String(k).trim().toLowerCase()), ...topic.keywords].filter(
+              (k) => k.length >= 3
             )
-          ).slice(0, 8)
+          )
+        ).slice(0, 8)
         : topic.keywords;
 
     const cleanedParas =
       topic.sourceWasOcr &&
-      Array.isArray(ai.cleanedParagraphs) &&
-      ai.cleanedParagraphs.length > 0
+        Array.isArray(ai.cleanedParagraphs) &&
+        ai.cleanedParagraphs.length > 0
         ? ai.cleanedParagraphs
-            .map((p) => String(p).replace(/\s+/g, ' ').trim())
-            .filter((p) => p.length >= 20 && !/camscanner|scanned\s+by/i.test(p))
+          .map((p) => String(p).replace(/\s+/g, ' ').trim())
+          .filter((p) => p.length >= 20 && !/camscanner|scanned\s+by/i.test(p))
         : null;
 
     // Only accept Groq cleanedParagraphs if they preserve meaningful volume of the original OCR text

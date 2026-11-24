@@ -1148,7 +1148,7 @@ async function callGroqTopicBatch(meta, batch) {
     grade: meta.grade,
     topics: payload
   });
-  const models = getModelCascade();
+  const models = getModelCascade().slice(0, 2);
   let lastError = "Falha ao contactar Groq";
   for (const model of models) {
     for (let attempt = 0; attempt < 2; attempt++) {
@@ -1156,7 +1156,7 @@ async function callGroqTopicBatch(meta, batch) {
         const body = {
           model,
           temperature: 0.2,
-          max_completion_tokens: hasOcrTopics ? 4200 : 2400,
+          max_completion_tokens: hasOcrTopics ? 3600 : 2200,
           response_format: { type: "json_object" },
           messages: [
             { role: "system", content: systemPrompt },
@@ -1173,11 +1173,11 @@ async function callGroqTopicBatch(meta, batch) {
             "Content-Type": "application/json"
           },
           body: JSON.stringify(body),
-          signal: AbortSignal.timeout(28e3)
+          signal: AbortSignal.timeout(5200)
         });
         if (res.status === 429 && attempt === 0) {
-          const retryAfter = Number(res.headers.get("retry-after") || "2");
-          await new Promise((r) => setTimeout(r, Math.min(4500, Math.max(1200, retryAfter * 1e3))));
+          const retryAfter = Number(res.headers.get("retry-after") || "1");
+          await new Promise((r) => setTimeout(r, Math.min(2e3, Math.max(800, retryAfter * 1e3))));
           continue;
         }
         const data = await res.json();
@@ -1229,31 +1229,65 @@ async function enrichTopicsWithGroq(meta, topics) {
   const enrichedByIndex = /* @__PURE__ */ new Map();
   const warnings = [];
   let modelUsed = null;
-  const limit = Math.min(topics.length, 36);
-  if (topics.length > 36) {
-    warnings.push("Os primeiros 36 temas foram resumidos pela Groq; os restantes usaram resumo base.");
+  const limit = Math.min(topics.length, 18);
+  if (topics.length > 18) {
+    warnings.push("Os primeiros 18 temas foram resumidos e enriquecidos via Groq; os restantes usaram resumos base para manter a publica\xE7\xE3o r\xE1pida.");
   }
+  const batchJobs = [];
   for (let i = 0; i < limit; i += batchSize) {
     const batch = [];
     for (let j = i; j < Math.min(limit, i + batchSize); j++) {
       batch.push({ index: j, topic: topics[j] });
     }
-    try {
-      const { items, model } = await callGroqTopicBatch(meta, batch);
-      modelUsed = modelUsed || model;
-      for (const item of items) {
-        if (item && typeof item.index === "number") {
-          enrichedByIndex.set(item.index, item);
+    batchJobs.push({ batchNum: Math.floor(i / batchSize) + 1, batch });
+  }
+  const DEADLINE_MS = 5500;
+  let deadlineTimer = null;
+  const deadlinePromise = new Promise((resolve) => {
+    deadlineTimer = setTimeout(() => resolve("timeout"), DEADLINE_MS);
+  });
+  try {
+    const CONCURRENCY = 3;
+    for (let c = 0; c < batchJobs.length; c += CONCURRENCY) {
+      const chunk = batchJobs.slice(c, c + CONCURRENCY);
+      const chunkPromises = chunk.map(async ({ batchNum, batch }) => {
+        try {
+          const { items, model } = await callGroqTopicBatch(meta, batch);
+          return { ok: true, batchNum, items, model };
+        } catch (err) {
+          return {
+            ok: false,
+            batchNum,
+            error: err instanceof Error ? err.message : String(err)
+          };
+        }
+      });
+      const raceResult = await Promise.race([
+        Promise.allSettled(chunkPromises),
+        deadlinePromise
+      ]);
+      if (raceResult === "timeout") {
+        warnings.push("Tempo limite de IA atingido; publica\xE7\xE3o conclu\xEDda rapidamente com resumos base para os restantes temas.");
+        break;
+      }
+      for (const res of raceResult) {
+        if (res.status === "fulfilled") {
+          const val = res.value;
+          if (val.ok) {
+            modelUsed = modelUsed || val.model;
+            for (const item of val.items) {
+              if (item && typeof item.index === "number") {
+                enrichedByIndex.set(item.index, item);
+              }
+            }
+          } else if (val.error) {
+            warnings.push(`Lote ${val.batchNum}: ${val.error}`);
+          }
         }
       }
-    } catch (err) {
-      warnings.push(
-        `Lote ${Math.floor(i / batchSize) + 1}: ${err instanceof Error ? err.message : String(err)}`
-      );
     }
-    if (i + batchSize < limit) {
-      await new Promise((r) => setTimeout(r, 260));
-    }
+  } finally {
+    if (deadlineTimer) clearTimeout(deadlineTimer);
   }
   let enrichedCount = 0;
   const updatedTopics = topics.map((topic, idx) => {
@@ -2964,33 +2998,31 @@ apiRouter.post("/admin/curricula", requireAdmin, async (req, res) => {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      for (let i = 0; i < aiResult.topics.length; i++) {
-        const t = aiResult.topics[i];
-        const fullText = (t.paragraphs || []).join("\n\n");
-        const preview = (t.previewParagraphs?.length ? t.previewParagraphs : t.paragraphs || []).slice(0, 2);
-        const summary = clampHalfParagraph(t.summaryHalfParagraph);
-        const searchNorm = normalizeSearchText(
-          [
-            subject,
-            grade,
-            t.unitLabel || "",
-            t.title,
-            summary,
-            ...t.keywords || [],
-            ...t.keyTakeaways || [],
-            fullText.slice(0, 1800)
-          ].join(" ")
-        );
-        const insRes = await client.query(
-          `
-          INSERT INTO topics (
-            curriculum_id, topic_order, unit_label, title, page_number, page_end,
-            summary_half_paragraph, preview_paragraphs, key_takeaways, keywords,
-            full_text, pages, visuals, visuals_count, reading_minutes, search_normalized
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13::jsonb,$14,$15,$16)
-          RETURNING id
-          `,
-          [
+      if (aiResult.topics.length > 0) {
+        const rowClauses = [];
+        const params = [];
+        let p = 1;
+        for (let i = 0; i < aiResult.topics.length; i++) {
+          const t = aiResult.topics[i];
+          const fullText = (t.paragraphs || []).join("\n\n");
+          const preview = (t.previewParagraphs?.length ? t.previewParagraphs : t.paragraphs || []).slice(0, 2);
+          const summary = clampHalfParagraph(t.summaryHalfParagraph);
+          const searchNorm = normalizeSearchText(
+            [
+              subject,
+              grade,
+              t.unitLabel || "",
+              t.title,
+              summary,
+              ...t.keywords || [],
+              ...t.keyTakeaways || [],
+              fullText.slice(0, 1800)
+            ].join(" ")
+          );
+          rowClauses.push(
+            `($${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++}::jsonb,$${p++}::jsonb,$${p++}::jsonb,$${p++},$${p++}::jsonb,$${p++}::jsonb,$${p++},$${p++},$${p++})`
+          );
+          params.push(
             curriculumId,
             i,
             t.unitLabel || null,
@@ -3007,10 +3039,21 @@ apiRouter.post("/admin/curricula", requireAdmin, async (req, res) => {
             (t.visuals || []).length,
             t.readingMinutes || 3,
             searchNorm
-          ]
+          );
+        }
+        const insRes = await client.query(
+          `
+          INSERT INTO topics (
+            curriculum_id, topic_order, unit_label, title, page_number, page_end,
+            summary_half_paragraph, preview_paragraphs, key_takeaways, keywords,
+            full_text, pages, visuals, visuals_count, reading_minutes, search_normalized
+          ) VALUES ${rowClauses.join(",\n")}
+          RETURNING id
+          `,
+          params
         );
-        if (insRes.rows[0]?.id) {
-          insertedTopicIds.push(String(insRes.rows[0].id));
+        for (const row of insRes.rows) {
+          if (row?.id) insertedTopicIds.push(String(row.id));
         }
       }
       await client.query(`UPDATE curricula SET status = 'published' WHERE id = $1`, [curriculumId]);

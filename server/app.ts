@@ -933,34 +933,34 @@ apiRouter.post('/admin/curricula', requireAdmin, async (req, res) => {
     try {
       await client.query('BEGIN');
 
-      for (let i = 0; i < aiResult.topics.length; i++) {
-        const t = aiResult.topics[i];
-        const fullText = (t.paragraphs || []).join('\n\n');
-        const preview = (t.previewParagraphs?.length ? t.previewParagraphs : t.paragraphs || []).slice(0, 2);
-        const summary = clampHalfParagraph(t.summaryHalfParagraph);
-        const searchNorm = normalizeSearchText(
-          [
-            subject,
-            grade,
-            t.unitLabel || '',
-            t.title,
-            summary,
-            ...(t.keywords || []),
-            ...(t.keyTakeaways || []),
-            fullText.slice(0, 1800),
-          ].join(' ')
-        );
+      if (aiResult.topics.length > 0) {
+        const rowClauses: string[] = [];
+        const params: any[] = [];
+        let p = 1;
 
-        const insRes = await client.query(
-          `
-          INSERT INTO topics (
-            curriculum_id, topic_order, unit_label, title, page_number, page_end,
-            summary_half_paragraph, preview_paragraphs, key_takeaways, keywords,
-            full_text, pages, visuals, visuals_count, reading_minutes, search_normalized
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10::jsonb,$11,$12::jsonb,$13::jsonb,$14,$15,$16)
-          RETURNING id
-          `,
-          [
+        for (let i = 0; i < aiResult.topics.length; i++) {
+          const t = aiResult.topics[i];
+          const fullText = (t.paragraphs || []).join('\n\n');
+          const preview = (t.previewParagraphs?.length ? t.previewParagraphs : t.paragraphs || []).slice(0, 2);
+          const summary = clampHalfParagraph(t.summaryHalfParagraph);
+          const searchNorm = normalizeSearchText(
+            [
+              subject,
+              grade,
+              t.unitLabel || '',
+              t.title,
+              summary,
+              ...(t.keywords || []),
+              ...(t.keyTakeaways || []),
+              fullText.slice(0, 1800),
+            ].join(' ')
+          );
+
+          rowClauses.push(
+            `($${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++},$${p++}::jsonb,$${p++}::jsonb,$${p++}::jsonb,$${p++},$${p++}::jsonb,$${p++}::jsonb,$${p++},$${p++},$${p++})`
+          );
+
+          params.push(
             curriculumId,
             i,
             t.unitLabel || null,
@@ -976,11 +976,24 @@ apiRouter.post('/admin/curricula', requireAdmin, async (req, res) => {
             JSON.stringify(t.visuals || []),
             (t.visuals || []).length,
             t.readingMinutes || 3,
-            searchNorm,
-          ]
+            searchNorm
+          );
+        }
+
+        const insRes = await client.query(
+          `
+          INSERT INTO topics (
+            curriculum_id, topic_order, unit_label, title, page_number, page_end,
+            summary_half_paragraph, preview_paragraphs, key_takeaways, keywords,
+            full_text, pages, visuals, visuals_count, reading_minutes, search_normalized
+          ) VALUES ${rowClauses.join(',\n')}
+          RETURNING id
+          `,
+          params
         );
-        if (insRes.rows[0]?.id) {
-          insertedTopicIds.push(String(insRes.rows[0].id));
+
+        for (const row of insRes.rows) {
+          if (row?.id) insertedTopicIds.push(String(row.id));
         }
       }
 
