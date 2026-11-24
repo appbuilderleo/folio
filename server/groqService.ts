@@ -54,7 +54,7 @@ function sanitizeGroqVectorVisual(
   if (type === 'flow' && Array.isArray(d.steps)) {
     const steps = d.steps
       .filter((s): s is Record<string, unknown> => Boolean(s && typeof s === 'object' && typeof (s as Record<string, unknown>).label === 'string'))
-      .slice(0, 5)
+      .slice(0, 10)
       .map((s) => ({
         label: String(s.label).trim().slice(0, 54),
         detail: typeof s.detail === 'string' ? s.detail.trim().slice(0, 105) : undefined,
@@ -71,7 +71,7 @@ function sanitizeGroqVectorVisual(
   } else if (type === 'cycle' && Array.isArray(d.nodes)) {
     const nodes = d.nodes
       .filter((n): n is Record<string, unknown> => Boolean(n && typeof n === 'object' && typeof (n as Record<string, unknown>).label === 'string'))
-      .slice(0, 6)
+      .slice(0, 8)
       .map((n) => ({
         label: String(n.label).trim().slice(0, 26),
         detail: typeof n.detail === 'string' ? n.detail.trim().slice(0, 48) : undefined,
@@ -94,7 +94,7 @@ function sanitizeGroqVectorVisual(
       .map((c) => ({
         title: String(c.title).trim().slice(0, 32),
         badge: typeof c.badge === 'string' ? c.badge.trim().slice(0, 20) : undefined,
-        points: (c.points as unknown[]).map((pt) => String(pt).trim().slice(0, 95)).filter((pt) => pt.length >= 3).slice(0, 4),
+        points: (c.points as unknown[]).map((pt) => String(pt).trim().slice(0, 95)).filter((pt) => pt.length >= 3).slice(0, 6),
       }))
       .filter((c) => c.title.length >= 2 && c.points.length >= 1);
     if (columns.length >= 2) {
@@ -103,7 +103,7 @@ function sanitizeGroqVectorVisual(
   } else if (type === 'timeline' && Array.isArray(d.events)) {
     const events = d.events
       .filter((e): e is Record<string, unknown> => Boolean(e && typeof e === 'object' && typeof (e as Record<string, unknown>).date === 'string' && typeof (e as Record<string, unknown>).label === 'string'))
-      .slice(0, 6)
+      .slice(0, 10)
       .map((e) => ({
         date: String(e.date).trim().slice(0, 16),
         label: String(e.label).trim().slice(0, 48),

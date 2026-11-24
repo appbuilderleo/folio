@@ -1018,7 +1018,7 @@ function sanitizeGroqVectorVisual(raw, pageNumber, topicIndex) {
   const caption = typeof raw.caption === "string" && raw.caption.trim().length >= 8 ? raw.caption.trim().slice(0, 180) : void 0;
   let spec = null;
   if (type === "flow" && Array.isArray(d.steps)) {
-    const steps = d.steps.filter((s) => Boolean(s && typeof s === "object" && typeof s.label === "string")).slice(0, 5).map((s) => ({
+    const steps = d.steps.filter((s) => Boolean(s && typeof s === "object" && typeof s.label === "string")).slice(0, 10).map((s) => ({
       label: String(s.label).trim().slice(0, 54),
       detail: typeof s.detail === "string" ? s.detail.trim().slice(0, 105) : void 0,
       badge: typeof s.badge === "string" ? s.badge.trim().slice(0, 20) : void 0
@@ -1031,7 +1031,7 @@ function sanitizeGroqVectorVisual(raw, pageNumber, topicIndex) {
       };
     }
   } else if (type === "cycle" && Array.isArray(d.nodes)) {
-    const nodes = d.nodes.filter((n) => Boolean(n && typeof n === "object" && typeof n.label === "string")).slice(0, 6).map((n) => ({
+    const nodes = d.nodes.filter((n) => Boolean(n && typeof n === "object" && typeof n.label === "string")).slice(0, 8).map((n) => ({
       label: String(n.label).trim().slice(0, 26),
       detail: typeof n.detail === "string" ? n.detail.trim().slice(0, 48) : void 0
     })).filter((n) => n.label.length >= 2);
@@ -1046,13 +1046,13 @@ function sanitizeGroqVectorVisual(raw, pageNumber, topicIndex) {
     const columns = d.columns.filter((c) => Boolean(c && typeof c === "object" && typeof c.title === "string" && Array.isArray(c.points))).slice(0, 3).map((c) => ({
       title: String(c.title).trim().slice(0, 32),
       badge: typeof c.badge === "string" ? c.badge.trim().slice(0, 20) : void 0,
-      points: c.points.map((pt) => String(pt).trim().slice(0, 95)).filter((pt) => pt.length >= 3).slice(0, 4)
+      points: c.points.map((pt) => String(pt).trim().slice(0, 95)).filter((pt) => pt.length >= 3).slice(0, 6)
     })).filter((c) => c.title.length >= 2 && c.points.length >= 1);
     if (columns.length >= 2) {
       spec = { type: "compare", columns };
     }
   } else if (type === "timeline" && Array.isArray(d.events)) {
-    const events = d.events.filter((e) => Boolean(e && typeof e === "object" && typeof e.date === "string" && typeof e.label === "string")).slice(0, 6).map((e) => ({
+    const events = d.events.filter((e) => Boolean(e && typeof e === "object" && typeof e.date === "string" && typeof e.label === "string")).slice(0, 10).map((e) => ({
       date: String(e.date).trim().slice(0, 16),
       label: String(e.label).trim().slice(0, 48),
       detail: typeof e.detail === "string" ? e.detail.trim().slice(0, 90) : void 0
