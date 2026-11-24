@@ -247,8 +247,12 @@ async function callGroqTopicBatch(
     'REGRAS OBRIGATÓRIAS:',
     '1. Escreve em português de Moçambique (norma europeia/moçambicana: "eletrões", "protões", "neutrões", "iónica", "atómica", sem brasileirismos), adequado à classe indicada.',
     '2. PROIBIDO usar as palavras "PDF", "livro", "manual", "módulo", "ficheiro" ou marcas de scanner como "CamScanner". Fala sempre em tema, matéria ou assunto.',
-    '3. "summaryHalfParagraph" DEVE ter extensão rigorosa de MEIO PARÁGRAFO: exatamente 2 frases objetivas, no máximo 215 caracteres (contando espaços), para caber num cartão de telemóvel.',
-    '4. Fidelidade total ao conteúdo do excerto: nunca inventes datas, nomes ou fórmulas.',
+    '3. "summaryHalfParagraph" DEVE SER 100% DIRETO AO CONCEITO DO TÍTULO, SEM RODEIOS NEM INTRODUÇÕES VAZIAS:',
+    '   - PROIBIDO dar voltas ou começar com frases enroladas como "Os fenómenos são classificados...", "Neste tema...", "O presente tema aborda...", "Estuda-se aqui...", "Refere-se a...".',
+    '   - Começa logo na primeira palavra definindo diretamente o conceito expresso no título da matéria.',
+    '   - DEVE BUSCAR E APROVEITAR DIRETAMENTE O EXCERTO DOS APONTAMENTOS DO PRÓPRIO LIVRO fornecido no excerto (mantém a terminologia didática e as definições textuais da lição original).',
+    '   - Extensão rigorosa de MEIO PARÁGRAFO: exatamente 1 a 2 frases curtas, no máximo 215 caracteres (contando espaços), para leitura instantânea no telemóvel.',
+    '4. "keyTakeaways": exatamente 3 pontos factuais essenciais extraídos diretamente das regras, fórmulas ou definições dos apontamentos originais do livro.',
     hasOcrTopics
       ? '5. Quando "sourceWasOcr" for true, devolve também "cleanedParagraphs" corrigindo gralhas evidentes de OCR (ex: letras trocadas, acentos em falta, ruído de margens/fotos) mantendo rigorosamente o texto original completo de cada parágrafo.'
       : '5. Foca em títulos claros, resumos rigorosos de ½ parágrafo e palavras-chave úteis para busca.',
