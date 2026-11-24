@@ -975,6 +975,31 @@ async function requireAdmin(req, res, next) {
 
 // server/groqService.ts
 import dotenv2 from "dotenv";
+
+// server/questionUtils.ts
+function splitNumberedQuestions(text) {
+  if (!text || typeof text !== "string") return [];
+  const trimmed = text.trim();
+  if (!trimmed) return [];
+  const regex = /(?<=[.?!:;»”"])\s+(?=(?:\d{1,3}[\.\)\-]|\([a-z0-9]+\))\s+[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ«“]|[a-e]\)\s+)/;
+  return trimmed.split(regex).map((s) => s.trim()).filter((s) => s.length > 0);
+}
+function normalizeParagraphsWithQuestions(paragraphs) {
+  if (!Array.isArray(paragraphs)) return [];
+  const result = [];
+  for (const p of paragraphs) {
+    if (!p || typeof p !== "string") continue;
+    const parts = splitNumberedQuestions(p);
+    for (const part of parts) {
+      if (part.length > 0) {
+        result.push(part);
+      }
+    }
+  }
+  return result;
+}
+
+// server/groqService.ts
 dotenv2.config();
 var GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions";
 var PREFERRED_MODELS = [
@@ -1316,7 +1341,9 @@ async function enrichTopicsWithGroq(meta, topics) {
     const origLen = topic.paragraphs.join(" ").length;
     const cleanedLen = cleanedParas ? cleanedParas.join(" ").length : 0;
     const usedCleaned = Boolean(cleanedParas && cleanedLen >= Math.min(120, origLen * 0.45));
-    const finalParagraphs = usedCleaned ? [...cleanedParas, ...topic.paragraphs.slice(12)] : topic.paragraphs;
+    const finalParagraphs = normalizeParagraphsWithQuestions(
+      usedCleaned ? [...cleanedParas, ...topic.paragraphs.slice(12)] : topic.paragraphs
+    );
     let finalPages = topic.pages;
     if (usedCleaned && topic.pages && topic.pages.length > 0) {
       if (topic.pages.length === 1) {

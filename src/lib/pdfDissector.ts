@@ -1,6 +1,7 @@
 import * as pdfjsLib from 'pdfjs-dist/legacy/build/pdf.mjs';
 import pdfWorkerUrl from 'pdfjs-dist/legacy/build/pdf.worker.min.mjs?url';
 import type { AdminTopicDraft, DissectionProgress, TopicPage, TopicVisual } from '../types/folio';
+import { splitNumberedQuestions } from './questionUtils';
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
@@ -877,8 +878,13 @@ function buildParagraphsFromLines(
 
   const flush = () => {
     const cleaned = buffer.replace(/\s+/g, ' ').replace(/\s+([.,;:!?])/g, '$1').trim();
-    if (cleaned.length >= 20 && !isScannerWatermark(cleaned)) {
-      paragraphs.push(cleaned);
+    if (cleaned.length >= 15 && !isScannerWatermark(cleaned)) {
+      const parts = splitNumberedQuestions(cleaned);
+      for (const p of parts) {
+        if (p.length >= 10 && !isScannerWatermark(p)) {
+          paragraphs.push(p);
+        }
+      }
     }
     buffer = '';
   };
@@ -898,12 +904,13 @@ function buildParagraphsFromLines(
 
     const lineGap = prevLine ? Math.abs(prevLine.y - line.y) : 0;
     const expectedStep = Math.max(12, bodyFontSize * 1.42);
-    const isBullet = /^[•▪▸◦\-*]\s+/.test(trimmed) || /^[a-z]\)\s+/i.test(trimmed);
+    const isQuestionOrBullet =
+      /^(?:[•▪▸◦\-*]|[a-e]\)|\d{1,3}[\.\)\-]|\([a-z0-9]+\))\s+/i.test(trimmed);
     const prevEnded = /[.!?:»"]$/.test(buffer.trim());
 
     if (
       buffer.length > 0 &&
-      (isBullet ||
+      (isQuestionOrBullet ||
         lineGap > expectedStep * 1.42 ||
         (buffer.length > 380 && prevEnded && lineGap > expectedStep * 1.08))
     ) {

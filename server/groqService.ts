@@ -1,4 +1,5 @@
 import dotenv from 'dotenv';
+import { normalizeParagraphsWithQuestions } from './questionUtils';
 import type { AdminTopicDraft, TopicVisual, VectorDiagramSpec } from '../src/types/folio';
 
 dotenv.config();
@@ -496,9 +497,11 @@ export async function enrichTopicsWithGroq(
     const origLen = topic.paragraphs.join(' ').length;
     const cleanedLen = cleanedParas ? cleanedParas.join(' ').length : 0;
     const usedCleaned = Boolean(cleanedParas && cleanedLen >= Math.min(120, origLen * 0.45));
-    const finalParagraphs = usedCleaned
-      ? [...cleanedParas!, ...topic.paragraphs.slice(12)]
-      : topic.paragraphs;
+    const finalParagraphs = normalizeParagraphsWithQuestions(
+      usedCleaned
+        ? [...cleanedParas!, ...topic.paragraphs.slice(12)]
+        : topic.paragraphs
+    );
 
     // Keep page-mapped paragraphs synced with Groq-cleaned OCR text so OfflineReader renders spotless prose
     let finalPages = topic.pages;

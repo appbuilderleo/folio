@@ -28,6 +28,7 @@ import type {
   UnlockedTopic,
 } from '../types/folio';
 import { TopicVisualCard } from './EditorialDiagram';
+import { isQuestionOrItem, normalizeParagraphsWithQuestions } from '../lib/questionUtils';
 
 interface OfflineReaderViewProps {
   curriculum: UnlockedCurriculum;
@@ -429,10 +430,22 @@ export function OfflineReaderView({
                         <span className="tabular-nums">Página {pg.pageNumber}</span>
                         <span className={`h-[1px] flex-1 border-t ${theme.border}`} aria-hidden="true" />
                       </div>
-                      <div className="space-y-5">
-                        {pg.paragraphs.map((p, pIdx) => (
-                          <p key={`${idx}-${pIdx}`}>{p}</p>
-                        ))}
+                      <div className="space-y-4">
+                        {normalizeParagraphsWithQuestions(pg.paragraphs).map((p, pIdx) => {
+                          const isQ = isQuestionOrItem(p);
+                          return (
+                            <p
+                              key={`${idx}-${pIdx}`}
+                              className={
+                                isQ
+                                  ? 'pl-3.5 border-l-2 border-amber/70 my-3 font-medium'
+                                  : undefined
+                              }
+                            >
+                              {p}
+                            </p>
+                          );
+                        })}
                       </div>
                       {pageFigs.map((fig) => (
                         <TopicVisualCard key={fig.id} visual={fig} theme={prefs.theme} />
@@ -453,9 +466,21 @@ export function OfflineReaderView({
               })()
             : (
               <>
-                {topic.paragraphs.map((p, idx) => (
-                  <p key={idx}>{p}</p>
-                ))}
+                {normalizeParagraphsWithQuestions(topic.paragraphs).map((p, idx) => {
+                  const isQ = isQuestionOrItem(p);
+                  return (
+                    <p
+                      key={idx}
+                      className={
+                        isQ
+                          ? 'pl-3.5 border-l-2 border-amber/70 my-3 font-medium'
+                          : undefined
+                      }
+                    >
+                      {p}
+                    </p>
+                  );
+                })}
                 {(topic.visuals || [])
                   .filter((v) => v.kind === 'extracted_figure')
                   .map((fig) => (
